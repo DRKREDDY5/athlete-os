@@ -180,3 +180,94 @@ def driver_scatter_chart(chart_df: pd.DataFrame, x_label: str, y_label: str, tit
     fig.update_xaxes(title=x_label, gridcolor=GRIDLINE)
     fig.update_yaxes(title=y_label, gridcolor=GRIDLINE)
     return fig
+
+
+# Zone 0 (below Zone 1) -> Zone 5, low to high cardiovascular intensity
+ZONE_COLORS = ["#e7eef7", "#bcd4ef", "#8bb7e3", "#4a8fd1", "#1f5fa8", "#0b2c52"]
+
+
+def intensity_profile_chart(profile: pd.DataFrame, min_sample_size: int = 3) -> go.Figure:
+    """
+    Horizontal bar of average strain by activity, sorted high to low.
+    Activities with fewer than `min_sample_size` sessions are drawn muted so
+    a single-session outlier doesn't visually read the same as a reliable average.
+    """
+    fig = go.Figure()
+    d = profile.dropna(subset=["avg_strain"]).sort_values("avg_strain", ascending=True)
+
+    if not d.empty:
+        colors = [COLOR_BLUE if s >= min_sample_size else MUTED for s in d["sessions"]]
+        fig.add_trace(go.Bar(
+            x=d["avg_strain"], y=d["activity"],
+            orientation="h",
+            marker=dict(color=colors),
+            text=[f"{v:.1f}" for v in d["avg_strain"]],
+            textposition="outside",
+            cliponaxis=False,
+            customdata=d["sessions"],
+            hovertemplate="%{y}: %{x:.1f} avg strain<br>Sessions: %{customdata}<extra></extra>",
+        ))
+
+    height = max(240, 42 * len(d) + 80) if not d.empty else 240
+    fig.update_layout(**BASE_LAYOUT, title="Average Strain by Activity (muted = fewer than 3 sessions)",
+                       height=height, showlegend=False)
+    fig.update_xaxes(title="Avg Strain", gridcolor=GRIDLINE)
+    fig.update_yaxes(title=None)
+    return fig
+
+
+def hr_zone_stacked_chart(zone_df: pd.DataFrame) -> go.Figure:
+    """Stacked horizontal bar of avg % workout time per HR zone, by activity."""
+    fig = go.Figure()
+
+    if not zone_df.empty:
+        d = zone_df.sort_values("sessions", ascending=True)
+        for z in range(6):
+            col = f"Zone {z}"
+            fig.add_trace(go.Bar(
+                y=d["activity"], x=d[col],
+                orientation="h",
+                name=col,
+                marker=dict(color=ZONE_COLORS[z]),
+                customdata=d["sessions"],
+                hovertemplate=f"%{{y}}<br>{col}: " + "%{x:.0f}% of workout time<br>Sessions: %{customdata}<extra></extra>",
+            ))
+
+    height = max(240, 42 * len(zone_df) + 100) if not zone_df.empty else 240
+    fig.update_layout(
+        **{**BASE_LAYOUT, "hovermode": "closest"},
+        title="Heart Rate Zone Profile by Activity", height=height, barmode="stack",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+    )
+    fig.update_xaxes(title="% of workout time", range=[0, 100], gridcolor=GRIDLINE)
+    fig.update_yaxes(title=None)
+    return fig
+
+
+def weekly_sessions_chart(weekly: pd.DataFrame) -> go.Figure:
+    fig = go.Figure()
+    if not weekly.empty:
+        fig.add_trace(go.Bar(
+            x=weekly["week_start"], y=weekly["sessions"],
+            marker=dict(color=COLOR_BLUE),
+            hovertemplate="Week of %{x|%b %d, %Y}<br>Sessions: %{y}<extra></extra>",
+        ))
+    fig.update_layout(**BASE_LAYOUT, title="Workout Sessions per Week", height=260, showlegend=False)
+    fig.update_xaxes(title=None, gridcolor=GRIDLINE)
+    fig.update_yaxes(title="Sessions", gridcolor=GRIDLINE)
+    return fig
+
+
+def weekly_strain_chart(weekly: pd.DataFrame) -> go.Figure:
+    fig = go.Figure()
+    if not weekly.empty:
+        fig.add_trace(go.Scatter(
+            x=weekly["week_start"], y=weekly["total_strain"],
+            mode="lines+markers",
+            line=dict(color=COLOR_ORANGE, width=2), marker=dict(size=5),
+            hovertemplate="Week of %{x|%b %d, %Y}<br>Total strain: %{y:.1f}<extra></extra>",
+        ))
+    fig.update_layout(**BASE_LAYOUT, title="Total Workout Strain per Week", height=260, showlegend=False)
+    fig.update_xaxes(title=None, gridcolor=GRIDLINE)
+    fig.update_yaxes(title="Total Strain", gridcolor=GRIDLINE)
+    return fig

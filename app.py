@@ -1,12 +1,13 @@
 """
 Athlete OS - Personal Performance Intelligence Dashboard
-Iteration 3: Overview + Recovery Driver Lab.
+Iteration 4: Overview + Recovery Driver Lab + Training Intelligence.
 
 Run with: streamlit run app.py
 """
 
 import datetime as dt
 
+import pandas as pd
 import streamlit as st
 
 from src.data_loader import (
@@ -16,9 +17,15 @@ from src.data_loader import (
 from src.metrics import compute_kpis, generate_snapshot
 from src.charts import (
     recovery_trend_chart, hrv_trend_chart, rhr_trend_chart, workout_breakdown_chart,
-    driver_scatter_chart,
+    driver_scatter_chart, intensity_profile_chart, hr_zone_stacked_chart,
+    weekly_sessions_chart, weekly_strain_chart,
 )
 from src.analysis import compute_recovery_drivers, key_recovery_insight
+from src.training import (
+    MIN_SAMPLE_SIZE, compute_activity_profile, compute_training_kpis,
+    compute_hr_zone_profile, compute_weekly_training_volume, filter_profile,
+    generate_comparison_insights, training_summary,
+)
 
 st.set_page_config(page_title="Athlete OS", page_icon="📊", layout="wide")
 
@@ -53,7 +60,7 @@ def _on_manual_date_change():
 
 with st.sidebar:
     st.header("Athlete OS")
-    page = st.radio("Page", ["Overview", "Recovery Lab"], label_visibility="collapsed")
+    page = st.radio("Page", ["Overview", "Recovery Lab", "Training Intelligence"], label_visibility="collapsed")
     st.divider()
     st.header("Date Range")
 
@@ -151,7 +158,7 @@ if page == "Overview":
 # ============================================================
 # RECOVERY LAB
 # ============================================================
-else:
+elif page == "Recovery Lab":
     st.title("Recovery Driver Lab")
     st.caption("Explore how training load, sleep, HRV, and resting heart rate relate to recovery.")
 
@@ -225,3 +232,175 @@ else:
             "- Correlation coefficients describe **association, not causation**.\n"
             "- This is exploratory fitness-data analysis, not medical advice."
         )
+
+# ============================================================
+# TRAINING INTELLIGENCE
+# ============================================================
+else:
+    st.title("Training Intelligence")
+    st.caption("Compare training load, intensity, duration, and cardiovascular demand across workout types.")
+
+    all_activity_types = sorted(workouts["Activity name"].unique()) if not workouts.empty else []
+    st.markdown(
+        f"**Selected Period:** {start_date:%b %d, %Y} — {end_date:%b %d, %Y}  \n"
+        f"{len(workouts)} workouts • {len(all_activity_types)} activity types"
+    )
+    st.divider()
+
+    if workouts.empty:
+        st.info("No workouts available in the selected date range. Try widening the range in the sidebar.")
+        st.stop()
+
+    full_profile = compute_activity_profile(workouts)
+
+    # ---------- Activity filter ----------
+    activity_options = ["All Activities"] + all_activity_types
+    selected_activity = st.selectbox("Activity", activity_options)
+
+    workouts_selected = (
+        workouts if selected_activity == "All Activities"
+        else workouts[workouts["Activity name"] == selected_activity]
+    )
+
+    # ---------- Training KPI cards ----------
+    tk = compute_training_kpis(workouts_selected)
+
+    row1 = st.columns(3)
+    row1[0].metric("Total Sessions", tk["total_sessions"])
+    row1[1].metric("Average Strain", fmt(tk["avg_strain"], "", 1))
+    row1[2].metric("Average Duration", fmt(tk["avg_duration"], " min"))
+
+    row2 = st.columns(3)
+    row2[0].metric("Average Calories", fmt(tk["avg_calories"], " kcal"))
+    row2[1].metric("Average Heart Rate", fmt(tk["avg_hr"], " bpm"))
+    row2[2].metric("Average Max Heart Rate", fmt(tk["avg_max_hr"], " bpm"))
+
+    st.divider()
+
+    # ---------- Workout Profile Comparison ----------
+    st.subheader("Workout Profile Comparison")
+
+    display_profile = full_profile.rename(columns={
+        "activity": "Activity", "sessions": "Sessions", "avg_strain": "Avg Strain",
+        "avg_duration": "Avg Duration", "avg_calories": "Avg Calories",
+        "avg_hr": "Avg HR", "avg_max_hr": "Avg Max HR",
+    }).set_index("Activity")
+
+    st.dataframe(
+        display_profile.style.format({
+            "Sessions": "{:.0f}",
+            "Avg Strain": lambda v: f"{v:.1f}" if pd.notna(v) else "N/A",
+            "Avg Duration": lambda v: f"{v:.0f} min" if pd.notna(v) else "N/A",
+            "Avg Calories": lambda v: f"{v:.0f} kcal" if pd.notna(v) else "N/A",
+            "Avg HR": lambda v: f"{v:.0f} bpm" if pd.notna(v) else "N/A",
+            "Avg Max HR": lambda v: f"{v:.0f} bpm" if pd.notna(v) else "N/A",
+        }),
+        use_container_width=True,
+    )
+    st.caption("Duration averages exclude tracking-error outliers (sessions still count toward Sessions).")
+
+    st.divider()
+
+    # ---------- Intensity Profile ----------
+    st.subheader("Intensity Profile")
+    st.caption("Which workouts produce the greatest physiological intensity? Bars in grey reflect fewer than 3 sessions.")
+    st.plotly_chart(intensity_profile_chart(full_profile, MIN_SAMPLE_SIZE), use_container_width=True)
+
+    st.divider()
+
+    # ---------- HR Zone Profile ----------
+    st.subheader("Heart Rate Zone Profile")
+    zone_profile = compute_hr_zone_profile(workouts)
+    if zone_profile.empty:
+        st.info("Not enough valid heart-rate-zone records in this period to build a zone profile "
+                 "(each activity needs at least 3 sessions with zone data).")
+    else:
+        st.caption("Average % of workout time spent in each HR zone, by activity.")
+        st.plotly_chart(hr_zone_stacked_chart(zone_profile), use_container_width=True)
+
+    st.divider()
+
+    # ---------- Training Volume Over Time ----------
+    st.subheader("Training Volume Over Time")
+    weekly = compute_weekly_training_volume(workouts_selected)
+
+    vol_col1, vol_col2 = st.columns(2)
+    with vol_col1:
+        st.plotly_chart(weekly_sessions_chart(weekly), use_container_width=True)
+    with vol_col2:
+        st.plotly_chart(weekly_strain_chart(weekly), use_container_width=True)
+
+    st.divider()
+
+    # ---------- Cricket vs Gym ----------
+    st.subheader("Cricket vs Gym Training")
+    cvg_activities = ["Cricket", "Functional Fitness", "Strength Trainer"]
+    cvg_profile = filter_profile(full_profile, cvg_activities)
+
+    missing = [a for a in cvg_activities if a not in cvg_profile["activity"].values]
+    if missing:
+        st.caption(f"Limited comparison: no data for {', '.join(missing)} in this period.")
+
+    if cvg_profile.empty:
+        st.info("None of Cricket, Functional Fitness, or Strength Trainer have data in this period.")
+    else:
+        cvg_display = cvg_profile.rename(columns={
+            "activity": "Activity", "sessions": "Sessions", "avg_strain": "Avg Strain",
+            "avg_duration": "Avg Duration", "avg_calories": "Avg Calories",
+            "avg_hr": "Avg HR", "avg_max_hr": "Avg Max HR",
+        }).set_index("Activity")
+
+        st.dataframe(
+            cvg_display.style.format({
+                "Sessions": "{:.0f}",
+                "Avg Strain": lambda v: f"{v:.1f}" if pd.notna(v) else "N/A",
+                "Avg Duration": lambda v: f"{v:.0f} min" if pd.notna(v) else "N/A",
+                "Avg Calories": lambda v: f"{v:.0f} kcal" if pd.notna(v) else "N/A",
+                "Avg HR": lambda v: f"{v:.0f} bpm" if pd.notna(v) else "N/A",
+                "Avg Max HR": lambda v: f"{v:.0f} bpm" if pd.notna(v) else "N/A",
+            }),
+            use_container_width=True,
+        )
+
+        cvg_insights = generate_comparison_insights(cvg_profile)
+        if cvg_insights:
+            for insight in cvg_insights:
+                st.markdown(f"- {insight}")
+        else:
+            st.write("Not enough overlapping data among these activities to generate comparisons.")
+
+    st.divider()
+
+    # ---------- Training Intelligence Summary ----------
+    st.subheader("Training Intelligence Summary")
+    summary = training_summary(full_profile)
+
+    if not summary:
+        st.write("Not enough data in this range to generate a summary.")
+    else:
+        def _caution(entry):
+            return "  \n*small sample*" if entry and entry["sessions"] < MIN_SAMPLE_SIZE else ""
+
+        s1, s2, s3, s4, s5 = st.columns(5)
+        mf = summary.get("most_frequent")
+        if mf:
+            s1.metric("Most Frequent", mf["activity"], f"{mf['value']:.0f} sessions")
+        hs = summary.get("highest_strain")
+        if hs:
+            s2.metric("Highest Strain", hs["activity"], f"{hs['value']:.1f} avg strain")
+        ld = summary.get("longest_duration")
+        if ld:
+            s3.metric("Longest Avg Session", ld["activity"], f"{ld['value']:.0f} min")
+        hc = summary.get("highest_calories")
+        if hc:
+            s4.metric("Highest Avg Calories", hc["activity"], f"{hc['value']:.0f} kcal")
+        hh = summary.get("highest_hr")
+        if hh:
+            s5.metric("Highest Avg HR", hh["activity"], f"{hh['value']:.0f} bpm")
+
+        small_sample_flags = [e["activity"] for e in summary.values() if e and e["sessions"] < MIN_SAMPLE_SIZE]
+        if small_sample_flags:
+            st.caption(
+                f"Note: {', '.join(sorted(set(small_sample_flags)))} appear above with fewer than "
+                f"{MIN_SAMPLE_SIZE} sessions in this period — treat as a small-sample result."
+            )
