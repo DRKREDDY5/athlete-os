@@ -1,0 +1,17 @@
+# Raw/personal WHOOP data - not for version control
+physiological_cycles.csv
+workouts.csv
+sleeps.csv
+
+# Logs
+streamlit.log
+*.log
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Local tooling config
+.claude/
