@@ -7,7 +7,6 @@ is hard-coded - so results always reflect the currently selected date range.
 
 import datetime as dt
 
-import numpy as np
 import pandas as pd
 
 

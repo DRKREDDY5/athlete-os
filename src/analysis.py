@@ -7,7 +7,6 @@ never causal or medical language. Every function operates on whatever
 date-filtered DataFrame is passed in; nothing is hard-coded.
 """
 
-import numpy as np
 import pandas as pd
 
 MIN_OBSERVATIONS = 5

@@ -17,10 +17,9 @@ COLOR_GOOD = "#0ca30c"
 COLOR_WARNING = "#fab219"
 COLOR_CRITICAL = "#d03b3b"
 
-# Categorical palette (fixed order)
+# Primary series colors
 COLOR_BLUE = "#2a78d6"
 COLOR_ORANGE = "#eb6834"
-CATEGORICAL = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948"]
 
 MUTED = "#898781"
 GRIDLINE = "#e1e0d9"
@@ -41,14 +40,20 @@ def recovery_trend_chart(phys: pd.DataFrame, sleeps: pd.DataFrame | None = None)
     fig = go.Figure()
 
     if not d.empty:
-        # Attach same-day main-sleep duration for richer hover context.
+        # Attach same-day main-sleep duration for richer hover context. phys
+        # already has its own "Asleep duration (min)" column (from the raw
+        # WHOOP export), so the joined sleep value is merged in under a
+        # distinct name to avoid a pandas _x/_y suffix collision that would
+        # silently remove the plain column name.
         if sleeps is not None and not sleeps.empty:
-            main_sleep = sleeps[~sleeps["is_nap"]][["date", "Asleep duration (min)"]]
-            main_sleep = main_sleep.groupby("date", as_index=False)["Asleep duration (min)"].mean()
+            main_sleep = sleeps[~sleeps["is_nap"]][["date", "Asleep duration (min)"]].rename(
+                columns={"Asleep duration (min)": "main_sleep_minutes"}
+            )
+            main_sleep = main_sleep.groupby("date", as_index=False)["main_sleep_minutes"].mean()
             d = d.merge(main_sleep, on="date", how="left")
         else:
-            d["Asleep duration (min)"] = pd.NA
-        d["sleep_hours"] = d["Asleep duration (min)"] / 60
+            d["main_sleep_minutes"] = pd.NA
+        d["sleep_hours"] = d["main_sleep_minutes"] / 60
 
         y_max = 100
         # Background recovery bands (drawn first, low opacity, behind the line)
@@ -189,19 +194,23 @@ ZONE_COLORS = ["#e7eef7", "#bcd4ef", "#8bb7e3", "#4a8fd1", "#1f5fa8", "#0b2c52"]
 def intensity_profile_chart(profile: pd.DataFrame, min_sample_size: int = 3) -> go.Figure:
     """
     Horizontal bar of average strain by activity, sorted high to low.
-    Activities with fewer than `min_sample_size` sessions are drawn muted so
-    a single-session outlier doesn't visually read the same as a reliable average.
+    Activities with `min_sample_size` sessions or fewer are drawn muted so a
+    small sample doesn't visually read the same as a reliable average.
     """
     fig = go.Figure()
     d = profile.dropna(subset=["avg_strain"]).sort_values("avg_strain", ascending=True)
 
     if not d.empty:
-        colors = [COLOR_BLUE if s >= min_sample_size else MUTED for s in d["sessions"]]
+        colors = [COLOR_BLUE if s > min_sample_size else MUTED for s in d["sessions"]]
+        labels = [
+            f"{v:.1f} (n={int(s)})" if s <= min_sample_size else f"{v:.1f}"
+            for v, s in zip(d["avg_strain"], d["sessions"])
+        ]
         fig.add_trace(go.Bar(
             x=d["avg_strain"], y=d["activity"],
             orientation="h",
             marker=dict(color=colors),
-            text=[f"{v:.1f}" for v in d["avg_strain"]],
+            text=labels,
             textposition="outside",
             cliponaxis=False,
             customdata=d["sessions"],
@@ -209,7 +218,7 @@ def intensity_profile_chart(profile: pd.DataFrame, min_sample_size: int = 3) -> 
         ))
 
     height = max(240, 42 * len(d) + 80) if not d.empty else 240
-    fig.update_layout(**BASE_LAYOUT, title="Average Strain by Activity (muted = fewer than 3 sessions)",
+    fig.update_layout(**BASE_LAYOUT, title=f"Average Strain by Activity (muted = {min_sample_size} or fewer sessions)",
                        height=height, showlegend=False)
     fig.update_xaxes(title="Avg Strain", gridcolor=GRIDLINE)
     fig.update_yaxes(title=None)

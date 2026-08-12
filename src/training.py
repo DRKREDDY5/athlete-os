@@ -117,14 +117,21 @@ def filter_profile(profile: pd.DataFrame, activities: list[str]) -> pd.DataFrame
     return profile.set_index("activity").loc[present].reset_index()
 
 
-def _small_sample_note(row: pd.Series) -> str:
-    return f" (small sample, n={int(row['sessions'])})" if row["sessions"] < MIN_SAMPLE_SIZE else ""
+def _pair_note(a: pd.Series, b: pd.Series) -> str:
+    """Combined small-sample caveat for a two-activity comparison sentence."""
+    parts = [f"{r['activity']} n={int(r['sessions'])}" for r in (a, b) if r["sessions"] <= MIN_SAMPLE_SIZE]
+    return f" (small sample: {', '.join(parts)})" if parts else ""
+
+
+def small_sample_label(sessions: int) -> str:
+    """Exact caution phrase used wherever a small-sample activity is called out."""
+    return f"Small sample: {int(sessions)} sessions" if sessions <= MIN_SAMPLE_SIZE else ""
 
 
 def generate_comparison_insights(profile: pd.DataFrame, max_insights: int = 3) -> list[str]:
     """
-    2-3 deterministic sentences comparing the activities present in `profile`
-    (already filtered to the activities of interest, e.g. Cricket vs Gym).
+    Generic fallback: 2-3 deterministic sentences comparing the highest/lowest
+    activities present in `profile` on strain, duration, and HR.
     """
     insights = []
 
@@ -136,7 +143,7 @@ def generate_comparison_insights(profile: pd.DataFrame, max_insights: int = 3) -
             pct = (hi["avg_strain"] - lo["avg_strain"]) / lo["avg_strain"] * 100
             insights.append(
                 f"**{hi['activity']}** produced {pct:.0f}% higher average strain than "
-                f"**{lo['activity']}**{_small_sample_note(hi)}{_small_sample_note(lo)}."
+                f"**{lo['activity']}**{_pair_note(hi, lo)}."
             )
 
     valid_duration = profile.dropna(subset=["avg_duration"])
@@ -147,18 +154,103 @@ def generate_comparison_insights(profile: pd.DataFrame, max_insights: int = 3) -
             diff = hi["avg_duration"] - lo["avg_duration"]
             insights.append(
                 f"**{hi['activity']}** sessions lasted {diff:.0f} minutes longer on average than "
-                f"**{lo['activity']}**{_small_sample_note(hi)}{_small_sample_note(lo)}."
+                f"**{lo['activity']}**{_pair_note(hi, lo)}."
             )
 
     valid_hr = profile.dropna(subset=["avg_hr"])
     if len(valid_hr) >= 2:
         lo = valid_hr.loc[valid_hr["avg_hr"].idxmin()]
+        note = small_sample_label(lo["sessions"])
         insights.append(
             f"**{lo['activity']}** showed the lowest average cardiovascular load among the compared "
-            f"activities ({lo['avg_hr']:.0f} bpm avg HR){_small_sample_note(lo)}."
+            f"activities ({lo['avg_hr']:.0f} bpm avg HR)" + (f" ({note})" if note else "") + "."
         )
 
     return insights[:max_insights]
+
+
+def generate_anchor_comparison_insights(profile: pd.DataFrame, anchor: str, max_insights: int = 3) -> list[str]:
+    """
+    Cricket-vs-Gym style comparisons: pit `anchor` (e.g. "Cricket") against
+    each other activity present in `profile` on strain, duration, and HR,
+    then keep the `max_insights` largest, most notable differences.
+
+    Falls back to generic hi/lo comparisons if the anchor isn't present, so
+    the section still says something useful when Cricket has no data in the
+    selected period.
+    """
+    if anchor not in profile["activity"].values or len(profile) < 2:
+        return generate_comparison_insights(profile, max_insights)
+
+    anchor_row = profile[profile["activity"] == anchor].iloc[0]
+    candidates = []  # (magnitude, sentence)
+
+    for _, other in profile[profile["activity"] != anchor].iterrows():
+        a_strain, o_strain = anchor_row["avg_strain"], other["avg_strain"]
+        if pd.notna(a_strain) and pd.notna(o_strain) and min(a_strain, o_strain) > 0:
+            diff_pct = (a_strain - o_strain) / o_strain * 100
+            hi, lo = (anchor_row, other) if diff_pct > 0 else (other, anchor_row)
+            candidates.append((
+                abs(diff_pct),
+                f"**{hi['activity']}** produced {abs(diff_pct):.0f}% higher average strain than "
+                f"**{lo['activity']}**{_pair_note(hi, lo)}.",
+            ))
+
+        a_dur, o_dur = anchor_row["avg_duration"], other["avg_duration"]
+        if pd.notna(a_dur) and pd.notna(o_dur) and abs(a_dur - o_dur) >= 1:
+            diff = a_dur - o_dur
+            hi, lo = (anchor_row, other) if diff > 0 else (other, anchor_row)
+            candidates.append((
+                abs(diff),
+                f"**{hi['activity']}** sessions lasted {abs(diff):.0f} minutes longer on average than "
+                f"**{lo['activity']}**{_pair_note(hi, lo)}.",
+            ))
+
+        a_hr, o_hr = anchor_row["avg_hr"], other["avg_hr"]
+        if pd.notna(a_hr) and pd.notna(o_hr) and a_hr != o_hr:
+            hi, lo = (anchor_row, other) if a_hr > o_hr else (other, anchor_row)
+            candidates.append((
+                abs(a_hr - o_hr),
+                f"**{lo['activity']}** showed lower average cardiovascular load than **{hi['activity']}** "
+                f"({lo['avg_hr']:.0f} vs {hi['avg_hr']:.0f} bpm avg HR)"
+                f"{_pair_note(lo, hi)}.",
+            ))
+
+    candidates.sort(key=lambda c: c[0], reverse=True)
+    # Keep each metric type at most once so the top N insights stay varied.
+    seen_kinds = set()
+    picked = []
+    for _, sentence in candidates:
+        kind = "strain" if "strain" in sentence else "minutes longer" if "minutes longer" in sentence else "cardio"
+        if kind in seen_kinds:
+            continue
+        seen_kinds.add(kind)
+        picked.append(sentence)
+        if len(picked) >= max_insights:
+            break
+
+    return picked
+
+
+def identify_cvg_leaders(profile: pd.DataFrame) -> dict:
+    """
+    For a small activity profile (e.g. Cricket vs Gym), identify which
+    activity leads on avg_strain (highest), avg_duration (highest), and
+    avg_hr (lowest - i.e. lowest cardiovascular load). Used purely to
+    highlight the standout stat on each activity's comparison card; returns
+    {} when there's nothing meaningful to compare (fewer than 2 activities).
+    """
+    if len(profile) < 2:
+        return {}
+
+    leaders = {}
+    if profile["avg_strain"].notna().any():
+        leaders["avg_strain"] = profile.loc[profile["avg_strain"].idxmax(), "activity"]
+    if profile["avg_duration"].notna().any():
+        leaders["avg_duration"] = profile.loc[profile["avg_duration"].idxmax(), "activity"]
+    if profile["avg_hr"].notna().any():
+        leaders["avg_hr"] = profile.loc[profile["avg_hr"].idxmin(), "activity"]
+    return leaders
 
 
 def training_summary(profile: pd.DataFrame) -> dict:
