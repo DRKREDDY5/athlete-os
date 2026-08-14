@@ -1,38 +1,73 @@
 """
-Visual design system for Athlete OS.
+Visual design system for Athlete OS: a premium, dark, telemetry-inspired
+sportive theme.
 
-A single CSS injection (inject_theme) plus a couple of small HTML-rendering
-helpers used throughout app.py to give KPI cards, section containers, and
-insight text a consistent "performance product" look. No analysis logic
-lives here - this module is presentation only.
+Native widget theming (backgrounds, sidebar, dataframes, buttons) comes from
+.streamlit/config.toml's [theme] block - the robust, version-stable way to
+theme Streamlit. This module only layers on top of that for things config.toml
+can't reach: the hero banner, KPI card polish, section eyebrows, and insight
+cards. No analysis logic lives here - this module is presentation only.
 """
 
+import base64
 import re
+from pathlib import Path
 
 import streamlit as st
+
+HERO_IMAGE_PATH = Path(__file__).resolve().parent.parent / "assets" / "athlete_os_hero.png"
+HERO_MAX_WIDTH = 1600  # downscale target so the embedded data URI stays reasonably small
 
 THEME_CSS = """
 <style>
 :root {
-    --aos-navy: #0b1220;
-    --aos-blue: #2a78d6;
-    --aos-blue-dark: #163f73;
-    --aos-bg: #f5f6f8;
-    --aos-card: #ffffff;
-    --aos-border: #e3e5ea;
-    --aos-text: #10131a;
-    --aos-muted: #6b7280;
+    --aos-bg: #080B10;
+    --aos-sidebar: #0B1016;
+    --aos-card: #111820;
+    --aos-elevated: #161E28;
+    --aos-border: rgba(255, 255, 255, 0.09);
+    --aos-text: #F4F7FA;
+    --aos-muted: #8E99A8;
+    --aos-green: #A6FF4D;
+    --aos-cyan: #35D9FF;
+    --aos-amber: #FFB547;
+    --aos-red: #FF5C5C;
 }
 
-.stApp { background: var(--aos-bg); }
+/* Atmospheric depth behind the whole app: a noticeable-but-soft cyan wash
+   (upper right, echoing the hero/analytical accent), a subtler green wash
+   (lower left), an extremely faint telemetry grid, and a soft diagonal
+   sheen so the page reads as a lit surface rather than flat black.
+   Applied with !important on the actual Streamlit view container (not just
+   .stApp) since that's the element the native dark theme paints its solid
+   backgroundColor onto - without targeting it directly the gradient layers
+   were being rendered underneath/behind that opaque fill. */
+.stApp,
+[data-testid="stAppViewContainer"] {
+    background:
+        radial-gradient(circle at 82% 8%, rgba(53, 217, 255, 0.16) 0%, rgba(53, 217, 255, 0.07) 20%, transparent 42%),
+        radial-gradient(circle at 10% 85%, rgba(166, 255, 77, 0.08) 0%, transparent 32%),
+        radial-gradient(circle at 100% 0%, transparent 58%, rgba(53, 217, 255, 0.025) 59%, transparent 61%),
+        repeating-linear-gradient(0deg, rgba(255,255,255,0.02) 0px, rgba(255,255,255,0.02) 1px, transparent 1px, transparent 48px),
+        repeating-linear-gradient(90deg, rgba(255,255,255,0.02) 0px, rgba(255,255,255,0.02) 1px, transparent 1px, transparent 48px),
+        linear-gradient(135deg, #080B10 0%, #0A1017 48%, #080B10 100%) !important;
+    background-attachment: fixed, fixed, fixed, fixed, fixed, fixed !important;
+}
+
+/* Sidebar: darker than the main content, no competing gradient - just a
+   crisp separating edge. */
+[data-testid="stSidebar"] {
+    background: var(--aos-sidebar) !important;
+    border-right: 1px solid rgba(255, 255, 255, 0.06) !important;
+}
 
 /* KPI metric cards */
 div[data-testid="stMetric"] {
     background: var(--aos-card);
     border: 1px solid var(--aos-border);
-    border-radius: 12px;
+    border-radius: 14px;
     padding: 14px 18px 10px 18px;
-    box-shadow: 0 1px 2px rgba(16,19,26,0.05);
+    box-shadow: 0 10px 30px rgba(0,0,0,0.25);
 }
 div[data-testid="stMetricLabel"] {
     font-size: 0.76rem;
@@ -49,19 +84,51 @@ div[data-testid="stMetricValue"] {
 
 /* Bordered containers used as dashboard-module cards */
 div[data-testid="stVerticalBlockBorderWrapper"] {
-    border-radius: 14px !important;
+    border-radius: 16px !important;
     border-color: var(--aos-border) !important;
+    background: var(--aos-card);
+    box-shadow: 0 10px 30px rgba(0,0,0,0.25);
 }
 
-h1 { font-weight: 800; letter-spacing: -0.02em; color: var(--aos-navy); }
-h2, h3, h4 { font-weight: 700; color: var(--aos-navy); }
+/* Elevated "feature" modules - the few sections meant to feel intentionally
+   important: the Overview trend/snapshot module, Primary Recovery Signal,
+   Cricket vs Gym. Lighter surface + a very restrained cyan glow. */
+div[data-testid="stVerticalBlockBorderWrapper"].st-key-feature-performance-trend,
+div[data-testid="stVerticalBlockBorderWrapper"].st-key-feature-primary-recovery-signal,
+div[data-testid="stVerticalBlockBorderWrapper"].st-key-feature-cricket-vs-gym {
+    background: var(--aos-elevated);
+    border-color: rgba(53, 217, 255, 0.28) !important;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.28), 0 0 18px rgba(53, 217, 255, 0.07);
+}
 
-/* Tabs as a segmented product nav */
+h1 { font-weight: 800; letter-spacing: -0.02em; color: var(--aos-text); }
+h2, h3, h4 { font-weight: 700; color: var(--aos-text); }
+
+/* Tabs as a segmented product nav - subtle glow only on the active tab */
 button[data-baseweb="tab"] { font-weight: 600; font-size: 0.95rem; }
-div[data-baseweb="tab-highlight"] { background-color: var(--aos-blue) !important; height: 3px !important; }
+button[data-baseweb="tab"][aria-selected="true"] {
+    text-shadow: 0 0 14px rgba(53, 217, 255, 0.18);
+}
+div[data-baseweb="tab-highlight"] {
+    background-color: var(--aos-cyan) !important;
+    height: 3px !important;
+    box-shadow: 0 0 10px rgba(53, 217, 255, 0.35);
+}
 
-/* Pill-shaped buttons (sidebar quick-range) */
+/* Sidebar quick-range buttons: pill shape, restrained active treatment
+   (thin cyan border + faint tint) rather than a solid glowing fill. */
 .stButton > button { border-radius: 999px; font-weight: 600; }
+.stButton > button[kind="primary"] {
+    background: rgba(53, 217, 255, 0.08) !important;
+    border: 1px solid var(--aos-cyan) !important;
+    color: var(--aos-text) !important;
+    box-shadow: 0 0 12px rgba(53, 217, 255, 0.10);
+}
+.stButton > button[kind="secondary"] {
+    background: var(--aos-card) !important;
+    border: 1px solid var(--aos-border) !important;
+    color: var(--aos-muted) !important;
+}
 
 /* Small uppercase section label ("eyebrow") */
 .aos-eyebrow {
@@ -70,46 +137,50 @@ div[data-baseweb="tab-highlight"] { background-color: var(--aos-blue) !important
     font-weight: 700;
     letter-spacing: .08em;
     text-transform: uppercase;
-    color: var(--aos-blue);
+    color: var(--aos-cyan);
     margin-bottom: 2px;
 }
 
-/* Insight cards (Athlete Intelligence, Cricket vs Gym observations, ...) */
+/* Insight cards (Performance Story, Cricket vs Gym observations, ...) */
 .aos-insight {
-    background: var(--aos-card);
+    background: var(--aos-elevated);
     border: 1px solid var(--aos-border);
-    border-left: 4px solid var(--aos-blue);
+    border-left: 3px solid var(--aos-cyan);
     border-radius: 10px;
     padding: 10px 14px;
     margin-bottom: 8px;
     font-size: 0.93rem;
     line-height: 1.4;
+    color: var(--aos-text);
 }
-.aos-insight b { color: var(--aos-navy); }
+.aos-insight b { color: var(--aos-cyan); }
 .aos-insight-category {
     display: inline-block;
     font-size: 0.68rem;
     font-weight: 700;
     letter-spacing: .06em;
     text-transform: uppercase;
-    color: var(--aos-blue);
+    color: var(--aos-muted);
     margin-right: 8px;
 }
 
-/* Hero "Key Insight" callout */
-.aos-hero-insight {
-    background: linear-gradient(135deg, var(--aos-navy), var(--aos-blue-dark));
-    color: #ffffff;
+/* Primary/Key insight callout (glass card, cyan accent) */
+.aos-signal-card {
+    background: rgba(22, 29, 39, 0.78);
+    backdrop-filter: blur(6px);
+    border: 1px solid rgba(53, 217, 255, 0.30);
     border-radius: 14px;
     padding: 16px 20px;
     margin: 8px 0 4px 0;
     font-size: 0.98rem;
     line-height: 1.45;
+    color: var(--aos-text);
+    box-shadow: 0 0 18px rgba(53, 217, 255, 0.07);
 }
-.aos-hero-insight .aos-eyebrow { color: #9cc4f2; }
-.aos-hero-insight b { color: #ffffff; }
+.aos-signal-card .aos-eyebrow { color: var(--aos-green); }
+.aos-signal-card b { color: var(--aos-cyan); }
 
-/* Compact stat rows inside Cricket vs Gym cards */
+/* Compact stat rows inside comparison cards (Cricket vs Gym) */
 .aos-stat-row {
     display: flex;
     justify-content: space-between;
@@ -120,10 +191,117 @@ div[data-baseweb="tab-highlight"] { background-color: var(--aos-blue) !important
 .aos-stat-row:last-child { border-bottom: none; }
 .aos-stat-row .label { color: var(--aos-muted); }
 .aos-stat-row .value { font-weight: 700; color: var(--aos-text); }
-.aos-stat-row.win .label { color: var(--aos-blue); font-weight: 600; }
-.aos-stat-row.win .value { color: var(--aos-blue); }
+.aos-stat-row.win .label { color: var(--aos-cyan); font-weight: 600; }
+.aos-stat-row.win .value {
+    color: var(--aos-cyan);
+    text-shadow: 0 0 10px rgba(53, 217, 255, 0.25);
+}
+
+/* DATA & METHODOLOGY: deliberately lower-priority surface than the rest of
+   the dashboard - darker, no elevation, no border glow. */
+div[data-testid="stExpander"] {
+    background: var(--aos-bg);
+    border: 1px solid var(--aos-border) !important;
+    border-radius: 12px !important;
+}
+div[data-testid="stExpander"] summary { color: var(--aos-muted); font-weight: 600; }
+
+/* Hero banner */
+.aos-hero {
+    position: relative;
+    border-radius: 20px;
+    overflow: hidden;
+    min-height: 460px;
+    padding: 40px 48px;
+    margin-bottom: 8px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    background-size: cover;
+    background-position: right center;
+    background-repeat: no-repeat;
+    border: 1px solid var(--aos-border);
+    box-shadow: 0 12px 32px rgba(0,0,0,0.28);
+}
+.aos-hero-eyebrow {
+    color: var(--aos-cyan);
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    margin-bottom: 10px;
+}
+.aos-hero-title {
+    font-size: 3rem;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    color: #ffffff;
+    margin: 0 0 6px 0;
+    line-height: 1.05;
+}
+.aos-hero-subtitle {
+    font-size: 1.15rem;
+    font-weight: 600;
+    color: #E4EAF0;
+    margin-bottom: 10px;
+}
+.aos-hero-problem {
+    font-size: 0.95rem;
+    color: #B7C1CC;
+    max-width: 480px;
+    line-height: 1.5;
+    margin-bottom: 20px;
+}
+.aos-hero-meta {
+    display: flex;
+    gap: 32px;
+    margin-bottom: 18px;
+    flex-wrap: wrap;
+}
+.aos-hero-meta-item .aos-eyebrow { color: var(--aos-cyan); margin-bottom: 4px; }
+.aos-hero-meta-value {
+    font-size: 1rem;
+    font-weight: 700;
+    color: #ffffff;
+}
+.aos-hero-signal {
+    max-width: 520px;
+}
 </style>
 """
+
+
+@st.cache_resource(show_spinner=False)
+def _load_hero_background_data_uri() -> str | None:
+    """
+    Base64 data URI for the hero background image, downscaled for a smaller
+    payload. Returns None (triggering a gradient-only fallback) if the file
+    is missing or can't be processed for any reason - base64 embedding is a
+    deliberate choice here since Streamlit doesn't serve arbitrary project
+    files over HTTP, so a plain url("assets/...") would not resolve.
+    """
+    if not HERO_IMAGE_PATH.exists():
+        return None
+
+    try:
+        from PIL import Image
+        import io
+
+        img = Image.open(HERO_IMAGE_PATH).convert("RGB")
+        if img.width > HERO_MAX_WIDTH:
+            ratio = HERO_MAX_WIDTH / img.width
+            img = img.resize((HERO_MAX_WIDTH, int(img.height * ratio)), Image.LANCZOS)
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=82, optimize=True)
+        encoded = base64.b64encode(buf.getvalue()).decode("ascii")
+        return f"data:image/jpeg;base64,{encoded}"
+    except Exception:
+        try:
+            raw = HERO_IMAGE_PATH.read_bytes()
+            encoded = base64.b64encode(raw).decode("ascii")
+            return f"data:image/png;base64,{encoded}"
+        except Exception:
+            return None
 
 
 def inject_theme() -> None:
@@ -144,6 +322,74 @@ def render_insight_card(category: str, html_text: str) -> None:
     )
 
 
+def metric_context_html(text: str, color: str = "var(--aos-muted)") -> str:
+    """Small uppercase contextual note rendered directly beneath a KPI card (e.g. 'GREEN RANGE')."""
+    return (
+        f'<div style="font-size:0.68rem; font-weight:700; letter-spacing:.04em; '
+        f'color:{color}; margin-top:-6px; margin-bottom:4px;">{text}</div>'
+    )
+
+
 def render_eyebrow(label: str) -> None:
     """Small uppercase label placed above a section heading."""
     st.markdown(f'<span class="aos-eyebrow">{label}</span>', unsafe_allow_html=True)
+
+
+def render_hero(
+    meta_items: list[tuple[str, str]],
+    signal_html: str | None,
+    eyebrow: str = "PERFORMANCE LAB",
+    title: str = "ATHLETE OS",
+    subtitle: str = "Performance Intelligence for Training, Recovery &amp; Sleep",
+    problem_sentence: str = (
+        "Turning wearable data into clear signals about recovery, training load, "
+        "and athletic performance."
+    ),
+) -> None:
+    """
+    Premium hero banner: local background image (base64, gracefully falls
+    back to a dark gradient if the asset is missing) with a readable dark
+    overlay on the left, title/subtitle/meta row, and an optional Primary
+    Performance Signal glass card - all rendered in one HTML block so it
+    actually nests correctly rather than relying on multi-call div wrapping.
+    """
+    image_uri = _load_hero_background_data_uri()
+
+    # Overlay stops match --aos-bg (#080B10) so the hero's dark side reads as
+    # a continuation of the page background rather than a separate poster.
+    overlay = (
+        "linear-gradient(90deg, rgba(8,11,16,0.97) 0%, rgba(8,11,16,0.88) 35%, "
+        "rgba(8,11,16,0.55) 62%, rgba(8,11,16,0.18) 100%)"
+    )
+    if image_uri:
+        background = f"{overlay}, url('{image_uri}')"
+    else:
+        # Graceful fallback if the hero asset can't be loaded: gradient-only hero,
+        # built from the same page/elevated/cyan tokens as the rest of the app.
+        background = "linear-gradient(120deg, #080B10 0%, #161D27 55%, #163044 100%)"
+
+    meta_html = "".join(
+        f'<div class="aos-hero-meta-item"><div class="aos-eyebrow">{label}</div>'
+        f'<div class="aos-hero-meta-value">{value}</div></div>'
+        for label, value in meta_items
+    )
+
+    signal_block = ""
+    if signal_html:
+        signal_block = (
+            '<div class="aos-hero-signal aos-signal-card">'
+            '<div class="aos-eyebrow">Primary Performance Signal</div>'
+            f'{signal_html}</div>'
+        )
+
+    st.markdown(
+        f'<div class="aos-hero" style="background-image: {background};">'
+        f'<div class="aos-hero-eyebrow">{eyebrow}</div>'
+        f'<div class="aos-hero-title">{title}</div>'
+        f'<div class="aos-hero-subtitle">{subtitle}</div>'
+        f'<div class="aos-hero-problem">{problem_sentence}</div>'
+        f'<div class="aos-hero-meta">{meta_html}</div>'
+        f'{signal_block}'
+        f'</div>',
+        unsafe_allow_html=True,
+    )

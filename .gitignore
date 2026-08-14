@@ -3,6 +3,11 @@ physiological_cycles.csv
 workouts.csv
 sleeps.csv
 
+# Streamlit secrets (contains the same personal WHOOP data as a fallback for
+# cloud deployment) - must never be committed. Paste its contents into the
+# Streamlit Community Cloud app's own "Secrets" settings instead.
+.streamlit/secrets.toml
+
 # Logs
 streamlit.log
 *.log

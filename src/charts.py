@@ -12,26 +12,44 @@ import plotly.graph_objects as go
 import numpy as np
 import pandas as pd
 
-# Status colors (fixed, never reused for series identity)
-COLOR_GOOD = "#0ca30c"
-COLOR_WARNING = "#fab219"
-COLOR_CRITICAL = "#d03b3b"
+# Status colors (fixed, never reused for series identity) - preserves the
+# red/yellow/green recovery semantics using the Athlete OS dark palette.
+COLOR_GOOD = "#A6FF4D"
+COLOR_WARNING = "#FFB547"
+COLOR_CRITICAL = "#FF5C5C"
 
 # Primary series colors
-COLOR_BLUE = "#2a78d6"
-COLOR_ORANGE = "#eb6834"
+COLOR_BLUE = "#35D9FF"    # "analytical cyan" - primary series accent
+COLOR_ORANGE = "#FFB547"  # amber - secondary series accent
 
-MUTED = "#898781"
-GRIDLINE = "#e1e0d9"
-PRIMARY_INK = "#0b0b0b"
+MUTED = "#8E99A8"
+GRIDLINE = "rgba(255, 255, 255, 0.06)"
+PRIMARY_INK = "#F4F7FA"    # reserved for the primary data line/trend itself
+AXIS_LABEL = "#C4CCD6"     # axis titles/ticks - present but visually secondary to data
 
 BASE_LAYOUT = dict(
-    plot_bgcolor="rgba(0,0,0,0)",
+    plot_bgcolor="rgba(0,0,0,0)",   # charts sit inside their card - no separate chart-surface rectangle
     paper_bgcolor="rgba(0,0,0,0)",
-    font=dict(family="system-ui, -apple-system, Segoe UI, sans-serif", color=PRIMARY_INK, size=13),
+    font=dict(family="system-ui, -apple-system, Segoe UI, sans-serif", color=AXIS_LABEL, size=13),
     margin=dict(l=10, r=10, t=40, b=10),
     hovermode="x unified",
+    hoverlabel=dict(bgcolor="#161D27", bordercolor="#27313D", font=dict(color="#F4F7FA", size=12)),
 )
+
+# Tick label formatting for day-level date axes: short/medium ranges show
+# "Aug 10" style day labels, long ranges collapse to "Feb 2026" style month
+# labels. Applied on top of x-values that are already midnight-normalized
+# (the "date" column, not a raw WHOOP cycle timestamp) so Plotly never has
+# a reason to fall back to showing a time-of-day tick like "00:00".
+DATE_TICKFORMATSTOPS = [
+    dict(dtickrange=[None, 30 * 24 * 60 * 60 * 1000], value="%b %d"),
+    dict(dtickrange=[30 * 24 * 60 * 60 * 1000, None], value="%b %Y"),
+]
+
+
+def _apply_date_axis(fig: go.Figure) -> None:
+    """Apply the shared day/month tick formatting to a figure's x-axis."""
+    fig.update_xaxes(tickformatstops=DATE_TICKFORMATSTOPS)
 
 
 def recovery_trend_chart(phys: pd.DataFrame, sleeps: pd.DataFrame | None = None) -> go.Figure:
@@ -57,14 +75,20 @@ def recovery_trend_chart(phys: pd.DataFrame, sleeps: pd.DataFrame | None = None)
 
         y_max = 100
         # Background recovery bands (drawn first, low opacity, behind the line)
-        fig.add_hrect(y0=0, y1=34, fillcolor=COLOR_CRITICAL, opacity=0.08, line_width=0)
-        fig.add_hrect(y0=34, y1=67, fillcolor=COLOR_WARNING, opacity=0.08, line_width=0)
-        fig.add_hrect(y0=67, y1=y_max, fillcolor=COLOR_GOOD, opacity=0.08, line_width=0)
+        fig.add_hrect(y0=0, y1=34, fillcolor=COLOR_CRITICAL, opacity=0.14, line_width=0)
+        fig.add_hrect(y0=34, y1=67, fillcolor=COLOR_WARNING, opacity=0.12, line_width=0)
+        fig.add_hrect(y0=67, y1=y_max, fillcolor=COLOR_GOOD, opacity=0.12, line_width=0)
+
+        # Plot at the calendar date (midnight), not the raw WHOOP cycle
+        # timestamp (which has an arbitrary time-of-day component) - this is
+        # the same calendar day, just without a spurious time value that
+        # otherwise causes Plotly's date axis to tick by hour on short ranges.
+        x_dates = pd.to_datetime(d["date"])
 
         customdata = d[["Heart rate variability (ms)", "Resting heart rate (bpm)", "Day Strain", "sleep_hours"]].to_numpy()
 
         fig.add_trace(go.Scatter(
-            x=d["Cycle start time"], y=d["Recovery score %"],
+            x=x_dates, y=d["Recovery score %"],
             mode="lines+markers",
             line=dict(color=PRIMARY_INK, width=2),
             marker=dict(size=5),
@@ -84,6 +108,7 @@ def recovery_trend_chart(phys: pd.DataFrame, sleeps: pd.DataFrame | None = None)
     fig.update_layout(**BASE_LAYOUT, title="Recovery Score Over Time", height=340)
     fig.update_yaxes(range=[0, 100], title="Recovery %", gridcolor=GRIDLINE, zeroline=False)
     fig.update_xaxes(title=None, gridcolor=GRIDLINE)
+    _apply_date_axis(fig)
     return fig
 
 
@@ -93,15 +118,16 @@ def _rolling_trend_chart(phys: pd.DataFrame, value_col: str, color: str, unit: s
 
     if not d.empty:
         d["rolling_avg"] = d[value_col].rolling(window=7, min_periods=1).mean()
+        x_dates = pd.to_datetime(d["date"])  # calendar date, not raw cycle timestamp - see recovery_trend_chart
 
         fig.add_trace(go.Scatter(
-            x=d["Cycle start time"], y=d[value_col],
+            x=x_dates, y=d[value_col],
             mode="lines", line=dict(color=color, width=1),
             opacity=0.25, name="Daily", showlegend=False,
             hoverinfo="skip",
         ))
         fig.add_trace(go.Scatter(
-            x=d["Cycle start time"], y=d["rolling_avg"],
+            x=x_dates, y=d["rolling_avg"],
             mode="lines", line=dict(color=color, width=2.5),
             name="7-day avg",
             hovertemplate=f"%{{x|%b %d, %Y}}<br>7-day avg: %{{y:.1f}} {unit}<extra></extra>",
@@ -110,6 +136,7 @@ def _rolling_trend_chart(phys: pd.DataFrame, value_col: str, color: str, unit: s
     fig.update_layout(**BASE_LAYOUT, title=title, height=300, showlegend=False)
     fig.update_yaxes(title=unit, gridcolor=GRIDLINE, zeroline=False)
     fig.update_xaxes(title=None, gridcolor=GRIDLINE)
+    _apply_date_axis(fig)
     return fig
 
 
@@ -187,8 +214,10 @@ def driver_scatter_chart(chart_df: pd.DataFrame, x_label: str, y_label: str, tit
     return fig
 
 
-# Zone 0 (below Zone 1) -> Zone 5, low to high cardiovascular intensity
-ZONE_COLORS = ["#e7eef7", "#bcd4ef", "#8bb7e3", "#4a8fd1", "#1f5fa8", "#0b2c52"]
+# Zone 0 (below Zone 1) -> Zone 5, low to high cardiovascular intensity.
+# A cyan ramp that brightens with intensity, capped by performance green at
+# the top zone - reads clearly against the dark theme without adding hues.
+ZONE_COLORS = ["#1B2A35", "#1E4A5C", "#1F6F86", "#22A3C2", "#35D9FF", "#A6FF4D"]
 
 
 def intensity_profile_chart(profile: pd.DataFrame, min_sample_size: int = 3) -> go.Figure:
@@ -264,6 +293,7 @@ def weekly_sessions_chart(weekly: pd.DataFrame) -> go.Figure:
     fig.update_layout(**BASE_LAYOUT, title="Workout Sessions per Week", height=260, showlegend=False)
     fig.update_xaxes(title=None, gridcolor=GRIDLINE)
     fig.update_yaxes(title="Sessions", gridcolor=GRIDLINE)
+    _apply_date_axis(fig)
     return fig
 
 
@@ -279,4 +309,5 @@ def weekly_strain_chart(weekly: pd.DataFrame) -> go.Figure:
     fig.update_layout(**BASE_LAYOUT, title="Total Workout Strain per Week", height=260, showlegend=False)
     fig.update_xaxes(title=None, gridcolor=GRIDLINE)
     fig.update_yaxes(title="Total Strain", gridcolor=GRIDLINE)
+    _apply_date_axis(fig)
     return fig

@@ -52,7 +52,25 @@ def compute_kpis(
     }
 
 
-def _trend_direction(df: pd.DataFrame, date_col: str, value_col: str, unit_label: str, thresh: float):
+# WHOOP's own recovery-score banding (used for both the Athlete Intelligence
+# "Recovery" insight and the Overview KPI card's contextual label).
+RECOVERY_GREEN_THRESHOLD = 67
+RECOVERY_YELLOW_THRESHOLD = 34
+
+
+def recovery_band_label(avg_recovery) -> str | None:
+    """WHOOP recovery band ("GREEN RANGE" / "YELLOW RANGE" / "RED RANGE") for a recovery %, or None if unavailable."""
+    if avg_recovery is None:
+        return None
+    if avg_recovery >= RECOVERY_GREEN_THRESHOLD:
+        return "GREEN RANGE"
+    elif avg_recovery >= RECOVERY_YELLOW_THRESHOLD:
+        return "YELLOW RANGE"
+    else:
+        return "RED RANGE"
+
+
+def trend_direction(df: pd.DataFrame, date_col: str, value_col: str, unit_label: str, thresh: float):
     """
     Compare the average of the first third vs. the last third of chronologically
     sorted, non-null values to describe a simple trend direction.
@@ -76,6 +94,36 @@ def _trend_direction(df: pd.DataFrame, date_col: str, value_col: str, unit_label
     return direction, delta
 
 
+def get_performance_trend_label(phys: pd.DataFrame) -> str:
+    """
+    Deterministic Improving / Declining / Mixed / Stable / "Not enough data"
+    label derived from the same HRV and resting-HR trend directions already
+    used in the "Fitness Trend" Athlete Intelligence insight below. This is
+    a categorical rollup of existing trend directions, not a new metric or
+    a fabricated score.
+    """
+    hrv_trend = trend_direction(phys, "Cycle start time", "Heart rate variability (ms)", "ms", thresh=1.0)
+    rhr_trend = trend_direction(phys, "Cycle start time", "Resting heart rate (bpm)", "bpm", thresh=0.5)
+
+    if hrv_trend is None and rhr_trend is None:
+        return "Not enough data"
+
+    hrv_dir = hrv_trend[0] if hrv_trend else "held steady"
+    rhr_dir = rhr_trend[0] if rhr_trend else "held steady"
+
+    # Favorable: HRV trending up and/or resting HR trending down.
+    favorable = hrv_dir == "trended up" or rhr_dir == "trended down"
+    unfavorable = hrv_dir == "trended down" or rhr_dir == "trended up"
+
+    if favorable and not unfavorable:
+        return "Improving"
+    if unfavorable and not favorable:
+        return "Declining"
+    if not favorable and not unfavorable:
+        return "Stable"
+    return "Mixed"
+
+
 def generate_snapshot(
     phys: pd.DataFrame, workouts: pd.DataFrame, start_date: dt.date, end_date: dt.date,
 ) -> list[tuple[str, str]]:
@@ -87,20 +135,15 @@ def generate_snapshot(
     # --- Recovery ---
     avg_recovery = safe_mean(phys["Recovery score %"])
     if avg_recovery is not None:
-        if avg_recovery >= 67:
-            band = "green"
-        elif avg_recovery >= 34:
-            band = "yellow"
-        else:
-            band = "red"
+        band = recovery_band_label(avg_recovery).split(" ")[0].lower()  # "GREEN RANGE" -> "green"
         observations.append((
             "Recovery",
             f"Average recovery was **{avg_recovery:.0f}%**, landing in the **{band}** range on average.",
         ))
 
     # --- Fitness Trend (HRV + resting HR direction) ---
-    hrv_trend = _trend_direction(phys, "Cycle start time", "Heart rate variability (ms)", "ms", thresh=1.0)
-    rhr_trend = _trend_direction(phys, "Cycle start time", "Resting heart rate (bpm)", "bpm", thresh=0.5)
+    hrv_trend = trend_direction(phys, "Cycle start time", "Heart rate variability (ms)", "ms", thresh=1.0)
+    rhr_trend = trend_direction(phys, "Cycle start time", "Resting heart rate (bpm)", "bpm", thresh=0.5)
     trend_parts = []
     if hrv_trend:
         direction, delta = hrv_trend

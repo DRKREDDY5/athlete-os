@@ -5,10 +5,13 @@ Reads the three raw WHOOP export CSVs and returns cleaned DataFrames.
 The original CSV files are never written to - all cleaning happens in memory.
 """
 
+import io
+import os
+
 import pandas as pd
 import streamlit as st
 
-DATA_DIR = "."  # CSVs live alongside app.py
+DATA_DIR = "."  # CSVs live alongside app.py, when present locally
 
 # A workout longer than this is treated as a tracking error (forgot to stop
 # the activity) and excluded from duration-based averages. Identified during
@@ -16,9 +19,33 @@ DATA_DIR = "."  # CSVs live alongside app.py
 DURATION_OUTLIER_MINUTES = 300
 
 
+def _read_csv(filename: str) -> pd.DataFrame:
+    """
+    Read a WHOOP export CSV from local disk if present (local development).
+    Otherwise fall back to Streamlit Secrets under the same key, minus the
+    ".csv" extension (cloud deployment) - this keeps personal WHOOP data out
+    of the public GitHub repo entirely: locally it's a gitignored file next
+    to app.py, and on Streamlit Community Cloud it lives only in that app's
+    encrypted Secrets, never in git.
+    """
+    local_path = f"{DATA_DIR}/{filename}"
+    if os.path.exists(local_path):
+        return pd.read_csv(local_path)
+
+    secret_key = filename.removesuffix(".csv")
+    if secret_key in st.secrets:
+        return pd.read_csv(io.StringIO(st.secrets[secret_key]))
+
+    raise FileNotFoundError(
+        f"Could not find {filename} locally, and no '{secret_key}' entry exists in Streamlit Secrets. "
+        f"For local development, place {filename} next to app.py. For a cloud deployment, add a "
+        f"'{secret_key}' secret containing the CSV's full text."
+    )
+
+
 @st.cache_data
 def load_physiological_cycles() -> pd.DataFrame:
-    df = pd.read_csv(f"{DATA_DIR}/physiological_cycles.csv")
+    df = _read_csv("physiological_cycles.csv")
     df["Cycle start time"] = pd.to_datetime(df["Cycle start time"])
     df["date"] = df["Cycle start time"].dt.date
 
@@ -41,7 +68,7 @@ def load_physiological_cycles() -> pd.DataFrame:
 
 @st.cache_data
 def load_workouts() -> pd.DataFrame:
-    df = pd.read_csv(f"{DATA_DIR}/workouts.csv")
+    df = _read_csv("workouts.csv")
     df["Workout start time"] = pd.to_datetime(df["Workout start time"])
     df["Cycle start time"] = pd.to_datetime(df["Cycle start time"])
     # Use the cycle date (the WHOOP "day") so a workout joins to the same
@@ -57,7 +84,7 @@ def load_workouts() -> pd.DataFrame:
 
 @st.cache_data
 def load_sleeps() -> pd.DataFrame:
-    df = pd.read_csv(f"{DATA_DIR}/sleeps.csv")
+    df = _read_csv("sleeps.csv")
     df["Sleep onset"] = pd.to_datetime(df["Sleep onset"])
     df["Cycle start time"] = pd.to_datetime(df["Cycle start time"])
     df["date"] = df["Cycle start time"].dt.date

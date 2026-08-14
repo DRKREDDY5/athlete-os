@@ -14,7 +14,10 @@ from src.data_loader import (
     load_physiological_cycles, load_workouts, load_sleeps,
     filter_by_date, get_overall_date_bounds,
 )
-from src.metrics import compute_kpis, generate_snapshot
+from src.metrics import (
+    compute_kpis, generate_snapshot, get_performance_trend_label,
+    trend_direction, recovery_band_label,
+)
 from src.charts import (
     recovery_trend_chart, hrv_trend_chart, rhr_trend_chart, workout_breakdown_chart,
     driver_scatter_chart, intensity_profile_chart, hr_zone_stacked_chart,
@@ -27,7 +30,9 @@ from src.training import (
     generate_anchor_comparison_insights, training_summary, small_sample_label,
     identify_cvg_leaders,
 )
-from src.theme import inject_theme, mdbold, render_insight_card, render_eyebrow
+from src.theme import (
+    inject_theme, mdbold, render_insight_card, render_eyebrow, render_hero, metric_context_html,
+)
 
 st.set_page_config(page_title="Athlete OS", page_icon="📊", layout="wide")
 inject_theme()
@@ -39,44 +44,65 @@ sleeps_all = load_sleeps()
 min_date, max_date = get_overall_date_bounds(phys_all, workouts_all, sleeps_all)
 
 # ---------- Sidebar: date range controls ----------
+# Default/initial state is always the full available dataset range (dynamic,
+# never hard-coded), so the app opens with a fully populated dashboard.
 if "start_date" not in st.session_state:
     st.session_state.start_date = min_date
     st.session_state.end_date = max_date
 
 
 def _set_range(days: int | None):
-    st.session_state.active_quick_range = days
     st.session_state.end_date = max_date
     st.session_state.start_date = max_date if days is None else max(min_date, max_date - dt.timedelta(days=days - 1))
     if days is None:
         st.session_state.start_date = min_date
 
 
-if "active_quick_range" not in st.session_state:
-    st.session_state.active_quick_range = None  # "All data" by default
-
-
-def _on_manual_date_change():
-    # Manual date-input edits deactivate the quick-range highlight.
-    st.session_state.active_quick_range = "custom"
+def _active_range_label(start_date, end_date) -> str:
+    """
+    Which quick-range option (if any) the current start/end dates match,
+    derived directly from the dates themselves rather than a separately
+    tracked flag - so it can never drift out of sync with what's actually
+    selected, and a manual date edit is automatically detected as Custom.
+    """
+    if start_date == min_date and end_date == max_date:
+        return "All data"
+    if end_date == max_date:
+        for label, days in [("Last 7 days", 7), ("Last 30 days", 30), ("Last 90 days", 90)]:
+            if start_date == max(min_date, max_date - dt.timedelta(days=days - 1)):
+                return label
+    return "Custom range"
 
 
 with st.sidebar:
-    render_eyebrow("Athlete OS")
-    st.markdown("#### Date Range")
+    st.markdown(
+        '<div style="font-size:1.05rem; font-weight:800; letter-spacing:-0.01em; color:var(--aos-text); '
+        'margin-bottom:0;">ATHLETE OS</div>'
+        '<div style="font-size:0.7rem; font-weight:700; letter-spacing:.12em; color:var(--aos-muted); '
+        'text-transform:uppercase; margin-bottom:18px;">Performance Lab</div>',
+        unsafe_allow_html=True,
+    )
+
+    render_eyebrow("Date Range")
+    active_label = _active_range_label(st.session_state.start_date, st.session_state.end_date)
 
     quick_ranges = [("Last 7 days", 7), ("Last 30 days", 30), ("Last 90 days", 90), ("All data", None)]
     col1, col2 = st.columns(2)
     for i, (label, days) in enumerate(quick_ranges):
         target_col = col1 if i % 2 == 0 else col2
-        is_active = st.session_state.active_quick_range == days
+        is_active = active_label == label
         with target_col:
             if st.button(("● " if is_active else "") + label, use_container_width=True,
                          type="primary" if is_active else "secondary"):
                 _set_range(days)
 
-    st.date_input("Start date", key="start_date", min_value=min_date, max_value=max_date, on_change=_on_manual_date_change)
-    st.date_input("End date", key="end_date", min_value=min_date, max_value=max_date, on_change=_on_manual_date_change)
+    st.write("")
+    render_eyebrow("Custom Range")
+    st.date_input("Start date", key="start_date", min_value=min_date, max_value=max_date)
+    st.date_input("End date", key="end_date", min_value=min_date, max_value=max_date)
+
+    if active_label == "Custom range":
+        st.caption("● Custom range")
 
 start_date, end_date = st.session_state.start_date, st.session_state.end_date
 
@@ -113,34 +139,18 @@ if hero_insight_text.startswith("Not enough data"):
 # ============================================================
 # HERO
 # ============================================================
-render_eyebrow("Performance Intelligence")
-st.markdown(
-    '<h1 style="margin-top:0; margin-bottom:2px;">Athlete OS</h1>'
-    '<div style="font-size:1.05rem; color:var(--aos-muted); margin-bottom:14px;">'
-    'Performance Intelligence for Training, Recovery &amp; Sleep</div>',
-    unsafe_allow_html=True,
+render_hero(
+    meta_items=[
+        ("Selected Period", f"{start_date:%b %d, %Y} – {end_date:%b %d, %Y}"),
+        ("Tracked Days", f"{days_tracked}"),
+        ("Training Sessions", f"{len(workouts)}"),
+    ],
+    signal_html=mdbold(hero_insight_text) if hero_insight_text else None,
+    problem_sentence=(
+        "Wearables generate hundreds of metrics. Athlete OS turns them into clear signals "
+        "about performance trends, recovery drivers, and training load."
+    ),
 )
-
-meta_cols = st.columns(4)
-meta_items = [
-    ("Selected Period", f"{start_date:%b %d, %Y} – {end_date:%b %d, %Y}"),
-    ("Tracked Days", f"{days_tracked}"),
-    ("Workouts", f"{len(workouts)}"),
-    ("Data Source", "WHOOP Export"),
-]
-for col, (label, value) in zip(meta_cols, meta_items):
-    col.markdown(
-        f'<div class="aos-eyebrow">{label}</div><div style="font-size:1rem; font-weight:600;">{value}</div>',
-        unsafe_allow_html=True,
-    )
-
-if hero_insight_text:
-    st.markdown(
-        f'<div class="aos-hero-insight"><div class="aos-eyebrow">Key Insight</div>{mdbold(hero_insight_text)}</div>',
-        unsafe_allow_html=True,
-    )
-
-st.write("")
 
 # ============================================================
 # NAVIGATION
@@ -151,26 +161,115 @@ tab_overview, tab_recovery, tab_training = st.tabs(["Overview", "Recovery Lab", 
 # OVERVIEW
 # ============================================================
 with tab_overview:
-    with st.container(border=True):
-        render_eyebrow("Snapshot")
-        st.markdown("#### Performance KPIs")
-        kpis = compute_kpis(phys, workouts, sleeps, start_date, end_date)
+    st.markdown("#### Overview")
+    st.caption("How is my performance trending?")
 
-        row1 = st.columns(4)
-        row1[0].metric("Average Recovery", fmt(kpis["avg_recovery"], "%"))
-        row1[1].metric("Average HRV", fmt(kpis["avg_hrv"], " ms"))
-        row1[2].metric("Resting Heart Rate", fmt(kpis["avg_rhr"], " bpm"))
-        row1[3].metric("Average Sleep", fmt(kpis["avg_sleep_hours"], " hrs", 1))
+    kpis = compute_kpis(phys, workouts, sleeps, start_date, end_date)
 
-        row2 = st.columns(3)
-        row2[0].metric("Days Tracked", kpis["days_tracked"])
-        row2[1].metric("Total Workouts", kpis["total_workouts"])
-        row2[2].metric("Average Day Strain", fmt(kpis["avg_day_strain"], "", 1))
+    # ---------- Observed Performance Trend (or Daily Snapshot for a single-day range) ----------
+    is_single_day = start_date == end_date
+
+    with st.container(border=True, key="feature-performance-trend"):
+        if is_single_day:
+            render_eyebrow("Daily Performance Snapshot")
+            st.markdown(
+                f'<div style="font-size:1.8rem; font-weight:800; color:var(--aos-text);">'
+                f'{start_date:%b %d, %Y}</div>'
+                f'<div style="color:var(--aos-muted); font-size:0.88rem; margin-top:2px;">'
+                f'A summary of recovery, sleep, strain, and training recorded for this day.</div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            render_eyebrow("Observed Performance Trend")
+            trend_label = get_performance_trend_label(phys)
+            trend_color = {
+                "Improving": "var(--aos-green)", "Declining": "var(--aos-red)",
+                "Mixed": "var(--aos-amber)", "Stable": "var(--aos-cyan)",
+            }.get(trend_label, "var(--aos-muted)")
+            st.markdown(
+                f'<div style="font-size:1.8rem; font-weight:800; color:{trend_color};">{trend_label}</div>'
+                f'<div style="color:var(--aos-muted); font-size:0.88rem; margin-top:2px;">'
+                f'Based on the observed HRV and resting heart rate trend direction across the selected period.</div>',
+                unsafe_allow_html=True,
+            )
+            if trend_label == "Not enough data":
+                st.caption(
+                    "Trend analysis requires multiple days of data. Select 7, 30, 90 days, or All Data "
+                    "to explore performance trends."
+                )
 
     st.write("")
 
+    # ---------- Telemetry Metrics ----------
+    def _trend_context(value_col, thresh, up_label="↑ TRENDING HIGHER", down_label="↓ TRENDING LOWER"):
+        """Neutral trending context from the existing trend_direction calculation - no invented good/bad claim."""
+        result = trend_direction(phys, "Cycle start time", value_col, "", thresh)
+        if result is None:
+            return "SELECTED-PERIOD AVG", "var(--aos-muted)"
+        direction, _ = result
+        if direction == "trended up":
+            return up_label, "var(--aos-cyan)"
+        elif direction == "trended down":
+            return down_label, "var(--aos-cyan)"
+        else:
+            return "STEADY", "var(--aos-muted)"
+
     with st.container(border=True):
-        render_eyebrow("Trends")
+        render_eyebrow("Telemetry Metrics")
+        st.markdown("#### Performance KPIs")
+
+        row1 = st.columns(4)
+        row1[0].metric("Recovery", fmt(kpis["avg_recovery"], "%"))
+        recovery_band = recovery_band_label(kpis["avg_recovery"])
+        row1[0].markdown(
+            metric_context_html(
+                recovery_band if recovery_band else "SELECTED-PERIOD AVG",
+                {"GREEN RANGE": "var(--aos-green)", "YELLOW RANGE": "var(--aos-amber)", "RED RANGE": "var(--aos-red)"}
+                .get(recovery_band, "var(--aos-muted)"),
+            ),
+            unsafe_allow_html=True,
+        )
+
+        row1[1].metric("HRV", fmt(kpis["avg_hrv"], " ms"))
+        hrv_text, hrv_color = _trend_context("Heart rate variability (ms)", 1.0)
+        row1[1].markdown(metric_context_html(hrv_text, hrv_color), unsafe_allow_html=True)
+
+        row1[2].metric("Resting HR", fmt(kpis["avg_rhr"], " bpm"))
+        rhr_text, rhr_color = _trend_context("Resting heart rate (bpm)", 0.5)
+        row1[2].markdown(metric_context_html(rhr_text, rhr_color), unsafe_allow_html=True)
+
+        row1[3].metric("Sleep", fmt(kpis["avg_sleep_hours"], " hrs", 1))
+        row1[3].markdown(metric_context_html("SELECTED-PERIOD AVG"), unsafe_allow_html=True)
+
+        row2 = st.columns(3)
+        row2[0].metric("Day Strain", fmt(kpis["avg_day_strain"], "", 1))
+        row2[0].markdown(metric_context_html("SELECTED-PERIOD AVG"), unsafe_allow_html=True)
+
+        row2[1].metric("Sessions", kpis["total_workouts"])
+        row2[1].markdown(metric_context_html("SELECTED-PERIOD TOTAL"), unsafe_allow_html=True)
+
+        row2[2].metric("Training Rate", fmt(kpis["sessions_per_week"], " / wk", 1))
+        row2[2].markdown(metric_context_html("SELECTED-PERIOD AVG"), unsafe_allow_html=True)
+
+    st.write("")
+
+    # ---------- Performance Story ----------
+    with st.container(border=True):
+        render_eyebrow("Performance Story")
+        st.markdown("#### What the Data Shows")
+        observations = generate_snapshot(phys, workouts, start_date, end_date)
+
+        if observations:
+            for category, text in observations:
+                render_insight_card(category, mdbold(text))
+        else:
+            st.write("Not enough data in this range to generate observations.")
+
+    st.write("")
+
+    # ---------- Supporting charts ----------
+    with st.container(border=True):
+        render_eyebrow("Supporting Charts")
         st.markdown("#### Recovery & Cardiovascular Trends")
         st.plotly_chart(recovery_trend_chart(phys, sleeps), use_container_width=True)
 
@@ -180,54 +279,88 @@ with tab_overview:
         with c2:
             st.plotly_chart(rhr_trend_chart(phys), use_container_width=True)
 
+        st.markdown("###### Training Mix")
         st.plotly_chart(workout_breakdown_chart(workouts), use_container_width=True)
-
-    st.write("")
-
-    with st.container(border=True):
-        render_eyebrow("Insights")
-        st.markdown("#### Athlete Intelligence")
-        observations = generate_snapshot(phys, workouts, start_date, end_date)
-
-        if observations:
-            for category, text in observations:
-                render_insight_card(category, mdbold(text))
-        else:
-            st.write("Not enough data in this range to generate observations.")
 
 # ============================================================
 # RECOVERY LAB
 # ============================================================
 with tab_recovery:
-    st.caption("Explore how training load, sleep, HRV, and resting heart rate relate to recovery.")
+    st.markdown("#### Recovery Lab")
+    st.caption("What appears to influence my recovery?")
 
     by_key = {d["key"]: d for d in drivers}
+    valid_drivers = [d for d in drivers if not d["insufficient"]]
+    insufficient_drivers = [d for d in drivers if d["insufficient"]]
 
+    # Display order/labels for the insufficient-data panel, independent of
+    # the by-strength ranking used elsewhere.
+    n_display_order = [
+        ("hrv", "HRV → Recovery"),
+        ("rhr", "Resting HR → Recovery"),
+        ("sleep", "Sleep → Recovery"),
+        ("prev_strain", "Prior Strain → Following Recovery"),
+    ]
+
+    # ---------- Recovery Signals (ranked drivers, telemetry-style bars) ----------
     with st.container(border=True):
-        render_eyebrow("Ranked")
+        render_eyebrow("Recovery Signals")
         st.markdown("#### Recovery Drivers")
-        st.caption("Ranked by strength of association with recovery in the selected period.")
 
-        for rank, d in enumerate(drivers, start=1):
-            cols = st.columns([0.5, 2.5, 1.3, 1.5])
-            cols[0].markdown(f"**{rank}**")
-            cols[1].markdown(f"**{d['label']}**")
-            if d["insufficient"]:
-                cols[2].markdown("N/A")
-                cols[3].markdown("Not enough data")
-            else:
-                cols[2].markdown(f"r = {d['r']:+.2f}")
-                cols[3].markdown(f"{d['strength']} ({d['direction']})")
+        if not valid_drivers:
+            st.markdown(
+                '<div style="font-weight:700; color:var(--aos-amber); font-size:1.05rem; margin-bottom:6px;">'
+                'INSUFFICIENT DATA FOR RELATIONSHIP ANALYSIS</div>'
+                '<div style="color:var(--aos-muted); font-size:0.9rem; margin-bottom:14px;">'
+                'Recovery relationships require at least 5 valid paired observations. This selected period '
+                'does not contain enough matched recovery/physiology records.</div>',
+                unsafe_allow_html=True,
+            )
+            st.markdown("**Valid observations:**")
+            for key, label in n_display_order:
+                st.markdown(f"- {label}: {by_key[key]['n']}")
+            st.caption(
+                "Select Last 7 Days, Last 30 Days, Last 90 Days, or All Data to explore recovery relationships."
+            )
+        else:
+            st.caption("Ranked by strength of association with recovery in the selected period.")
+            for rank, d in enumerate(valid_drivers, start=1):
+                bar_pct = round(abs(d["r"]) * 100)
+                bar_label = f"r = {d['r']:+.2f} · {d['strength']} ({d['direction']})"
+                st.markdown(
+                    f'<div style="display:flex; justify-content:space-between; margin-bottom:2px;">'
+                    f'<span style="font-weight:700; color:var(--aos-text);">{rank}. {d["label"]}</span>'
+                    f'<span style="color:var(--aos-muted); font-size:0.85rem;">{bar_label}</span></div>'
+                    f'<div style="background:var(--aos-border); border-radius:6px; height:8px; margin-bottom:14px;">'
+                    f'<div style="background:var(--aos-cyan); width:{bar_pct}%; height:8px; border-radius:6px;"></div></div>',
+                    unsafe_allow_html=True,
+                )
+
+            if insufficient_drivers:
+                st.markdown(
+                    '<div style="color:var(--aos-muted); font-size:0.78rem; font-weight:700; '
+                    'letter-spacing:.06em; text-transform:uppercase; margin-top:4px;">More data needed</div>',
+                    unsafe_allow_html=True,
+                )
+                for d in insufficient_drivers:
+                    st.markdown(
+                        f'<div style="display:flex; justify-content:space-between; color:var(--aos-muted); '
+                        f'font-size:0.85rem; padding:2px 0;"><span>{d["label"]}</span>'
+                        f'<span>N = {d["n"]}</span></div>',
+                        unsafe_allow_html=True,
+                    )
 
     st.write("")
 
-    with st.container(border=True):
-        render_eyebrow("Headline")
+    # ---------- Primary Recovery Signal ----------
+    with st.container(border=True, key="feature-primary-recovery-signal"):
+        render_eyebrow("Primary Recovery Signal")
         st.markdown("#### Key Recovery Insight")
-        st.markdown(
-            f'<div class="aos-hero-insight">{mdbold(key_recovery_insight(drivers))}</div>',
-            unsafe_allow_html=True,
-        )
+        if not valid_drivers:
+            signal_text = "More observations are needed before a primary recovery signal can be identified."
+        else:
+            signal_text = mdbold(key_recovery_insight(drivers))
+        st.markdown(f'<div class="aos-signal-card">{signal_text}</div>', unsafe_allow_html=True)
 
     st.write("")
 
@@ -244,8 +377,9 @@ with tab_recovery:
         )
         st.caption(d["interpretation"])
 
+    # ---------- Supporting Relationships ----------
     with st.container(border=True):
-        render_eyebrow("Relationships")
+        render_eyebrow("Supporting Relationships")
         st.markdown("#### Recovery Drivers in Detail")
 
         top_row = st.columns(2)
@@ -276,10 +410,12 @@ with tab_recovery:
 # TRAINING INTELLIGENCE
 # ============================================================
 with tab_training:
+    st.markdown("#### Training Intelligence")
+    st.caption("How does each type of training load my body?")
+
     all_activity_types = sorted(workouts["Activity name"].unique()) if not workouts.empty else []
     st.caption(
-        f"Compare training load, intensity, duration, and cardiovascular demand across workout types. "
-        f"{len(workouts)} workouts • {len(all_activity_types)} activity types."
+        f"{len(workouts)} workouts • {len(all_activity_types)} activity types in the selected period."
     )
 
     if workouts.empty:
@@ -326,8 +462,59 @@ with tab_training:
             "Avg Max HR": lambda v: f"{v:.0f} bpm" if pd.notna(v) else "N/A",
         }
 
+        # ---------- SIGNATURE: Cricket vs Gym (visual centerpiece) ----------
+        render_eyebrow("Signature Comparison")
+        with st.container(border=True, key="feature-cricket-vs-gym"):
+            st.markdown("#### Cricket vs Gym Training")
+            cvg_activities = ["Cricket", "Functional Fitness", "Strength Trainer"]
+            cvg_profile = filter_profile(full_profile, cvg_activities)
+
+            missing = [a for a in cvg_activities if a not in cvg_profile["activity"].values]
+            if missing:
+                st.caption(f"Limited comparison: no data for {', '.join(missing)} in this period.")
+
+            if cvg_profile.empty:
+                st.info("None of Cricket, Functional Fitness, or Strength Trainer have data in this period.")
+            else:
+                leaders = identify_cvg_leaders(cvg_profile)
+                stat_fields = [
+                    ("avg_strain", "Avg Strain", "", 1),
+                    ("avg_duration", "Avg Duration", " min", 0),
+                    ("avg_calories", "Avg Calories", " kcal", 0),
+                    ("avg_hr", "Avg HR", " bpm", 0),
+                ]
+
+                card_cols = st.columns(len(cvg_profile))
+                for col, (_, row) in zip(card_cols, cvg_profile.iterrows()):
+                    with col:
+                        with st.container(border=True):
+                            st.markdown(f"**{row['activity']}**")
+                            n_note = f" · {small_sample_label(row['sessions'])}" if row["sessions"] <= MIN_SAMPLE_SIZE else ""
+                            st.caption(f"{int(row['sessions'])} sessions{n_note}")
+                            for key, label, unit, decimals in stat_fields:
+                                val = row[key]
+                                val_str = "N/A" if pd.isna(val) else f"{val:.{decimals}f}{unit}"
+                                is_leader = leaders.get(key) == row["activity"]
+                                css_class = "aos-stat-row win" if is_leader else "aos-stat-row"
+                                st.markdown(
+                                    f'<div class="{css_class}"><span class="label">{label}</span>'
+                                    f'<span class="value">{val_str}</span></div>',
+                                    unsafe_allow_html=True,
+                                )
+
+                st.write("")
+                render_eyebrow("What the Data Says")
+                cvg_insights = generate_anchor_comparison_insights(cvg_profile, anchor="Cricket")
+                if cvg_insights:
+                    for insight in cvg_insights:
+                        render_insight_card("Comparison", mdbold(insight))
+                else:
+                    st.write("Not enough overlapping data among these activities to generate comparisons.")
+
+        st.write("")
+
         with st.container(border=True):
-            render_eyebrow("Comparison")
+            render_eyebrow("Training Profile")
             st.markdown("#### Workout Profile Comparison")
 
             display_profile = full_profile.rename(columns=profile_col_map).set_index("Activity")
@@ -366,7 +553,7 @@ with tab_training:
         st.write("")
 
         with st.container(border=True):
-            render_eyebrow("Volume")
+            render_eyebrow("Training Volume")
             st.markdown("#### Training Volume Over Time")
             weekly = compute_weekly_training_volume(workouts_selected)
 
@@ -378,60 +565,8 @@ with tab_training:
 
         st.write("")
 
-        # ---------- SIGNATURE: Cricket vs Gym ----------
-        render_eyebrow("Signature Comparison")
         with st.container(border=True):
-            st.markdown("#### Cricket vs Gym Training")
-            cvg_activities = ["Cricket", "Functional Fitness", "Strength Trainer"]
-            cvg_profile = filter_profile(full_profile, cvg_activities)
-
-            missing = [a for a in cvg_activities if a not in cvg_profile["activity"].values]
-            if missing:
-                st.caption(f"Limited comparison: no data for {', '.join(missing)} in this period.")
-
-            if cvg_profile.empty:
-                st.info("None of Cricket, Functional Fitness, or Strength Trainer have data in this period.")
-            else:
-                leaders = identify_cvg_leaders(cvg_profile)
-                stat_fields = [
-                    ("avg_strain", "Avg Strain", "", 1),
-                    ("avg_duration", "Avg Duration", " min", 0),
-                    ("avg_hr", "Avg HR", " bpm", 0),
-                ]
-
-                card_cols = st.columns(len(cvg_profile))
-                for col, (_, row) in zip(card_cols, cvg_profile.iterrows()):
-                    with col:
-                        with st.container(border=True):
-                            st.markdown(f"**{row['activity']}**")
-                            n_note = f" · {small_sample_label(row['sessions'])}" if row["sessions"] <= MIN_SAMPLE_SIZE else ""
-                            st.caption(f"{int(row['sessions'])} sessions{n_note}")
-                            for key, label, unit, decimals in stat_fields:
-                                val = row[key]
-                                val_str = "N/A" if pd.isna(val) else f"{val:.{decimals}f}{unit}"
-                                is_leader = leaders.get(key) == row["activity"]
-                                css_class = "aos-stat-row win" if is_leader else "aos-stat-row"
-                                st.markdown(
-                                    f'<div class="{css_class}"><span class="label">{label}</span>'
-                                    f'<span class="value">{val_str}</span></div>',
-                                    unsafe_allow_html=True,
-                                )
-
-                st.write("")
-                cvg_display = cvg_profile.rename(columns=profile_col_map).set_index("Activity")
-                st.dataframe(cvg_display.style.format(profile_style), use_container_width=True)
-
-                cvg_insights = generate_anchor_comparison_insights(cvg_profile, anchor="Cricket")
-                if cvg_insights:
-                    for insight in cvg_insights:
-                        render_insight_card("Comparison", mdbold(insight))
-                else:
-                    st.write("Not enough overlapping data among these activities to generate comparisons.")
-
-        st.write("")
-
-        with st.container(border=True):
-            render_eyebrow("Summary")
+            render_eyebrow("Training Signals")
             st.markdown("#### Training Intelligence Summary")
             summary = training_summary(full_profile)
 
@@ -463,10 +598,10 @@ with tab_training:
                     )
 
 # ============================================================
-# ABOUT THIS ANALYSIS (shown once, describes the full dataset)
+# DATA & METHODOLOGY (shown once, describes the full dataset; collapsed by default)
 # ============================================================
 st.write("")
-with st.expander("About This Analysis"):
+with st.expander("DATA & METHODOLOGY", expanded=False):
     st.markdown(
         "Athlete OS analyzes historical WHOOP CSV data using Python, Pandas, Streamlit, and Plotly."
     )
