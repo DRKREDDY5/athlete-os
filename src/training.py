@@ -71,6 +71,13 @@ def compute_hr_zone_profile(workouts: pd.DataFrame, min_sessions: int = MIN_ZONE
     """
     zone_cols = ["Zone 0", "Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5"]
     cols = ["activity", "sessions"] + zone_cols
+
+    # HR zone percentages are present in every Demo Athlete workout, but an
+    # uploaded WHOOP export isn't guaranteed to include them - degrade to
+    # "no zone profile available" rather than a KeyError.
+    if not all(c in workouts.columns for c in ZONE_PCT_COLS):
+        return pd.DataFrame(columns=cols)
+
     d = workouts.dropna(subset=ZONE_PCT_COLS).copy()
     if d.empty:
         return pd.DataFrame(columns=cols)
@@ -107,6 +114,26 @@ def compute_weekly_training_volume(workouts: pd.DataFrame) -> pd.DataFrame:
     ).reset_index()
 
     return weekly.sort_values("week_start")
+
+
+def pick_top_activities(profile: pd.DataFrame, max_n: int = 3, min_sessions: int = MIN_SAMPLE_SIZE) -> list[str]:
+    """
+    Dynamically choose up to `max_n` activities for a generic "Your Training
+    Comparison" section (used for uploaded data, where we can't assume any
+    specific activity like Cricket exists) - primarily by session count,
+    preferring activities that clear the small-sample threshold. Falls back
+    to whatever exists if nothing clears that bar, so the section still
+    shows something rather than staying empty.
+    """
+    if profile.empty:
+        return []
+
+    ranked = profile.sort_values("sessions", ascending=False)
+    eligible = ranked[ranked["sessions"] >= min_sessions]
+    if eligible.empty:
+        eligible = ranked
+
+    return eligible["activity"].head(max_n).tolist()
 
 
 def filter_profile(profile: pd.DataFrame, activities: list[str]) -> pd.DataFrame:

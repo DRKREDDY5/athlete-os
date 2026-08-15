@@ -20,3 +20,6 @@ venv/
 
 # Local tooling config
 .claude/
+
+# Reference copy of Streamlit Cloud secrets content - never committed
+deploy_secrets_reference/

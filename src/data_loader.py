@@ -3,6 +3,11 @@ Data loading & cleaning for Athlete OS.
 
 Reads the three raw WHOOP export CSVs and returns cleaned DataFrames.
 The original CSV files are never written to - all cleaning happens in memory.
+
+Cleaning logic is split from acquisition (clean_* vs load_*) so the same
+cleaning path can be reused for both the built-in Demo Athlete dataset and
+a user's uploaded WHOOP export (see src/uploads.py) - one analytics
+pipeline, two possible data sources.
 """
 
 import io
@@ -26,7 +31,8 @@ def _read_csv(filename: str) -> pd.DataFrame:
     ".csv" extension (cloud deployment) - this keeps personal WHOOP data out
     of the public GitHub repo entirely: locally it's a gitignored file next
     to app.py, and on Streamlit Community Cloud it lives only in that app's
-    encrypted Secrets, never in git.
+    encrypted Secrets, never in git. This is the Demo Athlete's data source
+    only - uploaded data never goes through this function.
     """
     local_path = f"{DATA_DIR}/{filename}"
     if os.path.exists(local_path):
@@ -43,9 +49,9 @@ def _read_csv(filename: str) -> pd.DataFrame:
     )
 
 
-@st.cache_data
-def load_physiological_cycles() -> pd.DataFrame:
-    df = _read_csv("physiological_cycles.csv")
+def clean_physiological_cycles(df: pd.DataFrame) -> pd.DataFrame:
+    """Cleaning logic shared by the Demo Athlete loader and uploaded-file processing."""
+    df = df.copy()
     df["Cycle start time"] = pd.to_datetime(df["Cycle start time"])
     df["date"] = df["Cycle start time"].dt.date
 
@@ -66,9 +72,9 @@ def load_physiological_cycles() -> pd.DataFrame:
     return df
 
 
-@st.cache_data
-def load_workouts() -> pd.DataFrame:
-    df = _read_csv("workouts.csv")
+def clean_workouts(df: pd.DataFrame) -> pd.DataFrame:
+    """Cleaning logic shared by the Demo Athlete loader and uploaded-file processing."""
+    df = df.copy()
     df["Workout start time"] = pd.to_datetime(df["Workout start time"])
     df["Cycle start time"] = pd.to_datetime(df["Cycle start time"])
     # Use the cycle date (the WHOOP "day") so a workout joins to the same
@@ -82,9 +88,9 @@ def load_workouts() -> pd.DataFrame:
     return df
 
 
-@st.cache_data
-def load_sleeps() -> pd.DataFrame:
-    df = _read_csv("sleeps.csv")
+def clean_sleeps(df: pd.DataFrame) -> pd.DataFrame:
+    """Cleaning logic shared by the Demo Athlete loader and uploaded-file processing."""
+    df = df.copy()
     df["Sleep onset"] = pd.to_datetime(df["Sleep onset"])
     df["Cycle start time"] = pd.to_datetime(df["Cycle start time"])
     df["date"] = df["Cycle start time"].dt.date
@@ -94,6 +100,24 @@ def load_sleeps() -> pd.DataFrame:
     df["is_nap"] = df["Nap"].astype(bool)
 
     return df
+
+
+@st.cache_data
+def load_physiological_cycles() -> pd.DataFrame:
+    """Demo Athlete only - cached since the built-in dataset never changes within a deployment."""
+    return clean_physiological_cycles(_read_csv("physiological_cycles.csv"))
+
+
+@st.cache_data
+def load_workouts() -> pd.DataFrame:
+    """Demo Athlete only - cached since the built-in dataset never changes within a deployment."""
+    return clean_workouts(_read_csv("workouts.csv"))
+
+
+@st.cache_data
+def load_sleeps() -> pd.DataFrame:
+    """Demo Athlete only - cached since the built-in dataset never changes within a deployment."""
+    return clean_sleeps(_read_csv("sleeps.csv"))
 
 
 def filter_by_date(df: pd.DataFrame, start_date, end_date) -> pd.DataFrame:

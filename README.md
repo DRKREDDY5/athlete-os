@@ -1,6 +1,9 @@
 # Athlete OS
 
-## Personal Performance Intelligence Dashboard
+## Personal Performance Intelligence
+
+**Live App:** https://athlete-os-rushikeshava.streamlit.app/
+**GitHub:** https://github.com/DRKREDDY5/athlete-os
 
 ### Problem
 
@@ -10,32 +13,67 @@ one place, how training load, sleep, and recovery actually relate to each other 
 
 ### Solution
 
-Athlete OS turns raw WHOOP CSV exports into an interactive Streamlit dashboard. It applies
-consistent data-cleaning rules (open-cycle handling, nap separation, duration-outlier
-exclusion), then surfaces three focused views: a daily performance overview, a correlation
-lab for recovery drivers, and a workout-type comparison tool — all driven by global date and
-activity filters, all computed live from whatever data is loaded.
+Athlete OS turns raw WHOOP CSV exports into an interactive Streamlit performance console. It
+applies consistent data-cleaning rules (open-cycle handling, nap separation, duration-outlier
+exclusion), then surfaces three focused views — an Overview / Performance Command Center, a
+correlation lab for recovery drivers, and a training comparison tool — plus an AI layer that
+interprets (never calculates) those same deterministic results in plain language.
+
+It works two ways:
+
+- **Demo Athlete** — explore the built-in dataset (the original author's ~7 months of WHOOP data).
+- **Analyze My WHOOP Data** — upload your own WHOOP export and get the exact same analysis,
+  scoped to your session only.
 
 ### Features
 
-- **Athlete Overview** — KPI summary, recovery/HRV/resting-HR trends, workout frequency,
-  and deterministic "Athlete Intelligence" insights
-- **Recovery Driver Lab** — correlates recovery against previous-day strain, sleep duration,
-  HRV, and resting heart rate, ranks the relationships, and states the strongest one
+- **Overview / Performance Command Center** — observed performance trend, telemetry KPI
+  cards, deterministic "Performance Story" insights, and supporting recovery/training charts
+- **Recovery Lab** — correlates recovery against previous-cycle strain, sleep duration, HRV,
+  and resting heart rate; ranks the relationships by strength and states the strongest one,
+  with an explicit insufficient-data state when a selected range doesn't have enough paired
+  observations
 - **Training Intelligence** — compares workout types on strain, duration, calories, and
-  heart-rate zones, including a dedicated Cricket vs. Gym comparison
-- Global date filtering (Last 7/30/90 days, All Data, custom range)
-- Activity-type filtering on Training Intelligence
+  heart-rate zones, with a **dynamic training comparison** (Demo Athlete's fixed "Cricket vs
+  Gym" story, or an automatically chosen top-3-by-session-count comparison for uploaded data —
+  never assumes an uploaded athlete has any specific activity)
+- **Athlete OS Intelligence** — ask natural-language questions about the active dataset/date
+  range ("What drives my recovery?", "Compare my top activities"), with a grounded **Evidence
+  Used** panel and a downloadable **Performance Brief** (see [Architecture](#architecture))
+- **Analyze My WHOOP Data** — upload your three WHOOP export CSVs in any order; Athlete OS
+  identifies which file is which by **schema, not filename** (see [Data Ingestion](#data-ingestion))
+- Global date filtering (Last 7/30/90 days, All Data, custom range, single-day snapshot mode)
 - Automatic, dynamically calculated (non-hard-coded) insights throughout
 
-### Dataset
+### Architecture
 
-The original project was built using approximately seven months of personal WHOOP export
-data (physiological cycles, workouts, and sleep records).
+```
+WHOOP Data (Demo dataset or your upload)
+        ↓
+Validation & Cleaning  (schema check, open-cycle/outlier/nap handling)
+        ↓
+Deterministic Pandas Analytics  (KPIs, correlations, activity profiles — all in src/)
+        ↓
+Charts & Insights  (Plotly charts, rule-based deterministic text insights)
+        ↓
+AI Interpretation  (Athlete OS Intelligence, optional, on explicit user request)
+```
 
-**Personal/raw data is intentionally excluded from the public repository for privacy** — see
-[Privacy](#privacy) below. To run the app yourself, supply your own WHOOP CSV exports
-(`physiological_cycles.csv`, `workouts.csv`, `sleeps.csv`) in the project root.
+**The core metrics are always calculated deterministically by Pandas** — recovery averages,
+correlations, sample sizes, activity comparisons, HR zones, everything shown on the Overview,
+Recovery Lab, and Training Intelligence pages. **The LLM does not calculate any of these
+numbers.** When you use Athlete OS Intelligence, the already-computed results are packaged
+into a compact summary and handed to the model purely to *explain* them in natural language;
+the "Evidence Used" figures shown under an AI answer are read directly from that same
+deterministic output, not parsed out of the model's reply.
+
+### Data Ingestion
+
+Uploaded files are read straight from Streamlit's in-memory upload buffer and classified by
+comparing their columns against the schema each of the three WHOOP export types requires —
+independent of what the file is named or what order you upload them in. If two files both
+look like the same export type, or a file doesn't match any known WHOOP export schema,
+Athlete OS reports that clearly instead of guessing.
 
 ### Tech Stack
 
@@ -43,6 +81,7 @@ data (physiological cycles, workouts, and sleep records).
 - Streamlit
 - Pandas
 - Plotly
+- Groq (LLM inference for Athlete OS Intelligence)
 - Claude in VS Code for vibe coding
 
 ### How to Run
@@ -52,21 +91,31 @@ pip install -r requirements.txt
 python -m streamlit run app.py
 ```
 
+Demo Athlete mode works out of the box if you have the three original WHOOP CSVs locally, or
+via Streamlit Secrets in a cloud deployment (see [Privacy](#privacy)). Analyze My WHOOP Data
+mode works immediately with no setup — just upload your own export. Athlete OS Intelligence
+is optional: without a `GROQ_API_KEY`, the rest of the app works normally and that section
+simply reports itself unavailable.
+
 ### Project Structure
 
 ```
-app.py                        Streamlit entry point — page layout, sidebar, filters
+app.py                        Streamlit entry point — page layout, sidebar, data source, AI section
 analyze.py                    Standalone exploratory-analysis script (initial EDA, not imported by the app)
 requirements.txt              Python dependencies
 src/
-  data_loader.py              Reads & cleans the WHOOP CSVs (cached), open-cycle/outlier/nap flags
-  metrics.py                  Overview KPIs and deterministic "Athlete Intelligence" insights
+  data_loader.py              Demo Athlete loading + shared clean_* functions used by both data sources
+  uploads.py                  Schema-based validation & classification for uploaded WHOOP exports
+  metrics.py                  Overview KPIs and deterministic "Performance Story" insights
   analysis.py                 Recovery Lab: correlation helper and driver-relationship builders
   training.py                 Training Intelligence: activity profiles, HR-zone stats, comparisons
   charts.py                   All Plotly chart builders
-physiological_cycles.csv      Raw WHOOP export (gitignored, not included)
-workouts.csv                  Raw WHOOP export (gitignored, not included)
-sleeps.csv                    Raw WHOOP export (gitignored, not included)
+  theme.py                    Dark "performance console" visual design system
+  ai_intelligence.py          Athlete OS Intelligence: context building, Groq calls, evidence, briefs
+.streamlit/config.toml        Streamlit theme configuration
+physiological_cycles.csv      Demo Athlete raw WHOOP export (gitignored, not included)
+workouts.csv                  Demo Athlete raw WHOOP export (gitignored, not included)
+sleeps.csv                    Demo Athlete raw WHOOP export (gitignored, not included)
 ```
 
 ### Data Analysis Notes
@@ -83,13 +132,23 @@ sleeps.csv                    Raw WHOOP export (gitignored, not included)
   require at least 5 valid observations, and guard against zero-variance series. Previous-day
   strain is aligned to the *following* cycle's recovery score (not same-day), and only when
   the two cycles are genuinely consecutive (no tracking gap between them). Every correlation
-  is reported as **association, not causation**.
+  is reported as **association, not causation**, by both the deterministic insight text and
+  Athlete OS Intelligence.
 
 ### Privacy
 
-Personal WHOOP CSV files (`physiological_cycles.csv`, `workouts.csv`, `sleeps.csv`) are
-excluded from version control via `.gitignore`, along with logs, `__pycache__/`, and local
-virtual environments. No personal health data is committed to this repository.
+- The Demo Athlete's raw WHOOP CSV files (`physiological_cycles.csv`, `workouts.csv`,
+  `sleeps.csv`) are excluded from this GitHub repository via `.gitignore`, along with logs,
+  `.streamlit/secrets.toml`, `__pycache__/`, and local virtual environments. They are not in
+  GitHub; the deployed app reads them from that deployment's own Streamlit Secrets instead.
+- **Uploaded WHOOP data (Analyze My WHOOP Data) is not written to disk, not added to any
+  database, and not committed to this repository.** It's read directly from the upload
+  buffer and processed for the current session only.
+- When you explicitly use an Athlete OS Intelligence feature (asking a question or
+  generating a brief), Athlete OS intentionally sends Groq a compact summary of
+  already-computed metrics for your selected view — not your raw WHOOP CSV rows. This is a
+  description of what the application code does, not a security guarantee about Groq's own
+  infrastructure or a claim of complete data protection.
 
 ### Week 1 — Gen Academy
 

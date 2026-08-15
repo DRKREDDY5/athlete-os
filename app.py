@@ -12,8 +12,10 @@ import streamlit as st
 
 from src.data_loader import (
     load_physiological_cycles, load_workouts, load_sleeps,
+    clean_physiological_cycles, clean_workouts, clean_sleeps,
     filter_by_date, get_overall_date_bounds,
 )
+from src.uploads import read_uploaded_csv, classify_uploads, DATASET_LABELS
 from src.metrics import (
     compute_kpis, generate_snapshot, get_performance_trend_label,
     trend_direction, recovery_band_label,
@@ -28,19 +30,173 @@ from src.training import (
     MIN_SAMPLE_SIZE, compute_activity_profile, compute_training_kpis,
     compute_hr_zone_profile, compute_weekly_training_volume, filter_profile,
     generate_anchor_comparison_insights, training_summary, small_sample_label,
-    identify_cvg_leaders,
+    identify_cvg_leaders, pick_top_activities,
 )
 from src.theme import (
     inject_theme, mdbold, render_insight_card, render_eyebrow, render_hero, metric_context_html,
+)
+from src.ai_intelligence import (
+    is_ai_available, suggested_questions, build_context, ask_question, generate_brief,
+    recovery_evidence_rows, format_brief_as_markdown, MAX_QUESTIONS_PER_SESSION,
 )
 
 st.set_page_config(page_title="Athlete OS", page_icon="📊", layout="wide")
 inject_theme()
 
-# ---------- Load & clean data (cached) ----------
-phys_all = load_physiological_cycles()
-workouts_all = load_workouts()
-sleeps_all = load_sleeps()
+# ============================================================
+# DATA SOURCE
+# ============================================================
+if "data_source" not in st.session_state:
+    st.session_state.data_source = "Demo Athlete"
+if "_prev_data_source" not in st.session_state:
+    st.session_state._prev_data_source = st.session_state.data_source
+
+with st.sidebar:
+    st.markdown(
+        '<div style="font-size:1.05rem; font-weight:800; letter-spacing:-0.01em; color:var(--aos-text); '
+        'margin-bottom:0;">ATHLETE OS</div>'
+        '<div style="font-size:0.7rem; font-weight:700; letter-spacing:.12em; color:var(--aos-muted); '
+        'text-transform:uppercase; margin-bottom:18px;">Performance Lab</div>',
+        unsafe_allow_html=True,
+    )
+
+    render_eyebrow("Data Source")
+    st.radio(
+        "Data Source", ["Demo Athlete", "Analyze My WHOOP Data"],
+        key="data_source", label_visibility="collapsed",
+    )
+    if st.session_state.data_source == "Demo Athlete":
+        st.caption("Explore Athlete OS using the built-in performance dataset.")
+    else:
+        st.caption("Upload your own WHOOP exports and generate your personal analysis.")
+    st.write("")
+
+data_source = st.session_state.data_source
+is_uploaded_mode = data_source == "Analyze My WHOOP Data"
+
+# Switching data sources invalidates any date range picked for the previous
+# dataset - drop it so the app re-derives fresh bounds for whichever
+# dataset is now active, instead of leaving one athlete's range applied to
+# another's data.
+if data_source != st.session_state._prev_data_source:
+    st.session_state.pop("start_date", None)
+    st.session_state.pop("end_date", None)
+    st.session_state._prev_data_source = data_source
+
+
+if "upload_widget_version" not in st.session_state:
+    st.session_state.upload_widget_version = 0
+
+
+def render_upload_panel():
+    """
+    Main-area upload flow for "Analyze My WHOOP Data": a single multi-file
+    uploader, automatic schema-based classification (order-independent, not
+    filename-based), a concise privacy note, and a readiness summary once
+    all three required types are unambiguously identified. Uploaded files
+    are read straight from Streamlit's in-memory buffers via pandas - never
+    written to disk, never added to any cache shared across sessions/users,
+    never logged. Returns (phys, workouts, sleeps, ready).
+    """
+    render_eyebrow("Analyze My WHOOP Data")
+    st.markdown("#### Upload Your WHOOP Exports")
+    st.caption(
+        "Your uploaded files are analyzed for the current app session and are "
+        "not added to the public Athlete OS repository."
+    )
+
+    uploaded_files = st.file_uploader(
+        "Upload your WHOOP exports", type="csv", accept_multiple_files=True,
+        key=f"whoop_uploads_{st.session_state.upload_widget_version}",
+        help="Select your Physiological Cycles, Workouts, and Sleeps CSV exports together, in any order.",
+    )
+
+    if uploaded_files:
+        clear_col, _ = st.columns([1, 4])
+        with clear_col:
+            if st.button("Clear uploaded data", use_container_width=True):
+                # Swapping the uploader's key forces Streamlit to mount a
+                # fresh, empty widget rather than mutating shared state. Also
+                # drop the date range so a subsequent upload of different
+                # data doesn't inherit stale bounds from what was cleared.
+                st.session_state.upload_widget_version += 1
+                st.session_state.pop("start_date", None)
+                st.session_state.pop("end_date", None)
+                st.rerun()
+
+    if not uploaded_files:
+        st.info("Upload your three WHOOP export files (Physiological Cycles, Workouts, Sleeps) to generate your personal analysis.")
+        return None, None, None, False
+
+    files = [(f.name, read_uploaded_csv(f)) for f in uploaded_files]
+    result = classify_uploads(files)
+
+    render_eyebrow("WHOOP Exports")
+    for dtype, label in DATASET_LABELS.items():
+        if dtype in result["assigned"]:
+            filename, df = result["assigned"][dtype]
+            st.success(f"✓ {label} — {len(df)} records ({filename})")
+        elif dtype in result["duplicates"]:
+            st.error(
+                f"✗ {label}: {len(result['duplicates'][dtype])} uploaded files all look like a "
+                f"{label} export ({', '.join(result['duplicates'][dtype])}) - upload only one."
+            )
+        else:
+            st.warning(f"○ {label}: not yet identified.")
+
+    for filename, best_guess in result["unclassified"]:
+        if best_guess:
+            st.error(
+                f"Could not identify **{filename}** as a supported WHOOP export "
+                f"(closest match: {DATASET_LABELS[best_guess]}, but required columns are missing)."
+            )
+        else:
+            st.error(
+                f"Could not identify **{filename}** as a supported WHOOP export. "
+                f"Supported types: {', '.join(DATASET_LABELS.values())}."
+            )
+
+    for filename in result["unreadable"]:
+        st.error(f"**{filename}** could not be read as a CSV file.")
+
+    if result["missing_types"]:
+        missing_labels = [DATASET_LABELS[t] for t in result["missing_types"]]
+        st.markdown("**Missing:**\n" + "\n".join(f"- {label} export" for label in missing_labels))
+        return None, None, None, False
+
+    phys_raw = result["assigned"]["physiological_cycles"][1]
+    workouts_raw = result["assigned"]["workouts"][1]
+    sleeps_raw = result["assigned"]["sleeps"][1]
+
+    try:
+        phys = clean_physiological_cycles(phys_raw)
+        workouts = clean_workouts(workouts_raw)
+        sleeps = clean_sleeps(sleeps_raw)
+    except Exception as e:
+        st.error(f"Could not process the uploaded files: {e}")
+        return None, None, None, False
+
+    min_d, max_d = get_overall_date_bounds(phys, workouts, sleeps)
+    st.markdown(
+        f'<div class="aos-signal-card"><div class="aos-eyebrow" style="color:var(--aos-green);">'
+        f'WHOOP Data Ready ✓</div>'
+        f'{len(phys)} physiological records · {len(workouts)} workouts · {len(sleeps)} sleep records<br>'
+        f'Date range: {min_d:%b %d, %Y} – {max_d:%b %d, %Y}</div>',
+        unsafe_allow_html=True,
+    )
+
+    return phys, workouts, sleeps, True
+
+
+# ---------- Load & clean data ----------
+if is_uploaded_mode:
+    phys_all, workouts_all, sleeps_all, data_ready = render_upload_panel()
+    if not data_ready:
+        st.stop()
+else:
+    phys_all = load_physiological_cycles()
+    workouts_all = load_workouts()
+    sleeps_all = load_sleeps()
 min_date, max_date = get_overall_date_bounds(phys_all, workouts_all, sleeps_all)
 
 # ---------- Sidebar: date range controls ----------
@@ -75,14 +231,6 @@ def _active_range_label(start_date, end_date) -> str:
 
 
 with st.sidebar:
-    st.markdown(
-        '<div style="font-size:1.05rem; font-weight:800; letter-spacing:-0.01em; color:var(--aos-text); '
-        'margin-bottom:0;">ATHLETE OS</div>'
-        '<div style="font-size:0.7rem; font-weight:700; letter-spacing:.12em; color:var(--aos-muted); '
-        'text-transform:uppercase; margin-bottom:18px;">Performance Lab</div>',
-        unsafe_allow_html=True,
-    )
-
     render_eyebrow("Date Range")
     active_label = _active_range_label(st.session_state.start_date, st.session_state.end_date)
 
@@ -165,6 +313,107 @@ with tab_overview:
     st.caption("How is my performance trending?")
 
     kpis = compute_kpis(phys, workouts, sleeps, start_date, end_date)
+
+    # ---------- Athlete OS Intelligence ----------
+    if "ai_question_count" not in st.session_state:
+        st.session_state.ai_question_count = 0
+    if "ai_last_result" not in st.session_state:
+        st.session_state.ai_last_result = None
+
+    with st.container(border=True, key="feature-ai-intelligence"):
+        render_eyebrow("Athlete OS Intelligence")
+        st.markdown("#### Ask Your Performance Data")
+        st.caption(
+            "AI questions send summarized Athlete OS metrics — not your raw WHOOP CSV files — "
+            "to the language model for interpretation."
+        )
+
+        if not is_ai_available():
+            st.info("Athlete OS Intelligence is unavailable because the AI service is not configured.")
+        else:
+            remaining = MAX_QUESTIONS_PER_SESSION - st.session_state.ai_question_count
+
+            suggestions = suggested_questions(is_uploaded_mode)
+            sugg_cols = st.columns(len(suggestions))
+            clicked_question = None
+            for col, q in zip(sugg_cols, suggestions):
+                with col:
+                    if st.button(q, use_container_width=True, key=f"ai_sugg_{q}"):
+                        clicked_question = q
+
+            free_text = st.text_input(
+                "Ask a question about your data", key="ai_free_text",
+                placeholder="e.g. What appears most associated with my recovery?",
+            )
+            ask_col, brief_col = st.columns([1, 1.4])
+            with ask_col:
+                ask_clicked = st.button("Ask", type="primary", use_container_width=True)
+            with brief_col:
+                brief_clicked = st.button("Generate Performance Brief", use_container_width=True)
+
+            st.caption(f"{max(remaining, 0)} of {MAX_QUESTIONS_PER_SESSION} AI questions remaining this session.")
+
+            question_to_ask = clicked_question or (free_text.strip() if ask_clicked and free_text.strip() else None)
+
+            if remaining <= 0 and (question_to_ask or brief_clicked):
+                st.warning(
+                    f"You've reached the {MAX_QUESTIONS_PER_SESSION}-question limit for this session. "
+                    "The rest of the Athlete OS dashboard keeps working normally - refresh the page to "
+                    "reset the AI question limit."
+                )
+            elif question_to_ask:
+                context = build_context(phys, workouts, sleeps, start_date, end_date, data_source, is_uploaded_mode)
+                result = ask_question(question_to_ask, context)
+                st.session_state.ai_question_count += 1
+                st.session_state.ai_last_result = {"type": "answer", "question": question_to_ask, "result": result, "context": context}
+            elif brief_clicked:
+                context = build_context(phys, workouts, sleeps, start_date, end_date, data_source, is_uploaded_mode)
+                result = generate_brief(context)
+                st.session_state.ai_question_count += 1
+                st.session_state.ai_last_result = {"type": "brief", "result": result, "context": context}
+
+            last = st.session_state.ai_last_result
+            if last:
+                st.write("")
+                if last["type"] == "answer":
+                    result = last["result"]
+                    if result["ok"]:
+                        st.markdown(f'<div class="aos-signal-card">{result["answer"]}</div>', unsafe_allow_html=True)
+                        if not result["deterministic_only"]:
+                            with st.expander("Evidence Used"):
+                                for row in recovery_evidence_rows(last["context"]):
+                                    r_str = f"{row['r']:+.2f}" if row["r"] is not None else "N/A"
+                                    st.markdown(
+                                        f"**{row['driver']} → Recovery** — r = {r_str} · N = {row['n']} "
+                                        f"· {row['strength'] or 'Insufficient data'}"
+                                    )
+                    elif result["error"] == "not_configured":
+                        st.info("Athlete OS Intelligence is unavailable because the AI service is not configured.")
+                    else:
+                        st.error("Athlete OS Intelligence couldn't generate a response right now. Please try again.")
+                elif last["type"] == "brief":
+                    result = last["result"]
+                    if result["ok"]:
+                        st.markdown(f'<div class="aos-signal-card">{result["text"]}</div>', unsafe_allow_html=True)
+                        with st.expander("Evidence Used"):
+                            for row in recovery_evidence_rows(last["context"]):
+                                r_str = f"{row['r']:+.2f}" if row["r"] is not None else "N/A"
+                                st.markdown(
+                                    f"**{row['driver']} → Recovery** — r = {r_str} · N = {row['n']} "
+                                    f"· {row['strength'] or 'Insufficient data'}"
+                                )
+                        st.download_button(
+                            "Download Brief (.md)",
+                            data=format_brief_as_markdown(last["context"], result["text"]),
+                            file_name="athlete_os_performance_brief.md",
+                            mime="text/markdown",
+                        )
+                    elif result["error"] == "not_configured":
+                        st.info("Athlete OS Intelligence is unavailable because the AI service is not configured.")
+                    else:
+                        st.error("Athlete OS Intelligence couldn't generate a brief right now. Please try again.")
+
+    st.write("")
 
     # ---------- Observed Performance Trend (or Daily Snapshot for a single-day range) ----------
     is_single_day = start_date == end_date
@@ -462,19 +711,28 @@ with tab_training:
             "Avg Max HR": lambda v: f"{v:.0f} bpm" if pd.notna(v) else "N/A",
         }
 
-        # ---------- SIGNATURE: Cricket vs Gym (visual centerpiece) ----------
+        # ---------- SIGNATURE: Cricket vs Gym (Demo) / Your Training Comparison (uploaded) ----------
+        if is_uploaded_mode:
+            section_title = "Your Training Comparison"
+            cvg_activities = pick_top_activities(full_profile, max_n=3)
+            anchor_activity = cvg_activities[0] if cvg_activities else None
+            missing_note = None
+        else:
+            section_title = "Cricket vs Gym Training"
+            cvg_activities = ["Cricket", "Functional Fitness", "Strength Trainer"]
+            anchor_activity = "Cricket"
+            missing_note = [a for a in cvg_activities if a not in full_profile["activity"].values]
+
         render_eyebrow("Signature Comparison")
         with st.container(border=True, key="feature-cricket-vs-gym"):
-            st.markdown("#### Cricket vs Gym Training")
-            cvg_activities = ["Cricket", "Functional Fitness", "Strength Trainer"]
+            st.markdown(f"#### {section_title}")
             cvg_profile = filter_profile(full_profile, cvg_activities)
 
-            missing = [a for a in cvg_activities if a not in cvg_profile["activity"].values]
-            if missing:
-                st.caption(f"Limited comparison: no data for {', '.join(missing)} in this period.")
+            if missing_note:
+                st.caption(f"Limited comparison: no data for {', '.join(missing_note)} in this period.")
 
             if cvg_profile.empty:
-                st.info("None of Cricket, Functional Fitness, or Strength Trainer have data in this period.")
+                st.info("Not enough activity data in this period for a training comparison.")
             else:
                 leaders = identify_cvg_leaders(cvg_profile)
                 stat_fields = [
@@ -504,7 +762,10 @@ with tab_training:
 
                 st.write("")
                 render_eyebrow("What the Data Says")
-                cvg_insights = generate_anchor_comparison_insights(cvg_profile, anchor="Cricket")
+                cvg_insights = (
+                    generate_anchor_comparison_insights(cvg_profile, anchor=anchor_activity)
+                    if anchor_activity else []
+                )
                 if cvg_insights:
                     for insight in cvg_insights:
                         render_insight_card("Comparison", mdbold(insight))
