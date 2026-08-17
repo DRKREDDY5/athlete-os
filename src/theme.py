@@ -267,6 +267,154 @@ div[data-testid="stExpander"] summary { color: var(--aos-muted); font-weight: 60
 .aos-hero-signal {
     max-width: 520px;
 }
+
+/* ============================================================
+   RESPONSIVE / MOBILE
+   Desktop styling above 768px is untouched by everything below.
+   Strategy: a safe blanket fallback (every column stacks full-width
+   on narrow screens, so nothing can overflow), then a few explicit,
+   opt-in overrides - via .st-key-* wrapper classes set through
+   st.container(key=...) in app.py - for the handful of sections that
+   want a 2-column grid or a natural wrap instead of a full stack.
+   ============================================================ */
+@media (max-width: 768px) {
+    html, body, .stApp { overflow-x: hidden; }
+
+    [data-testid="stMainBlockContainer"], .block-container {
+        padding-left: 0.75rem !important;
+        padding-right: 0.75rem !important;
+        padding-top: 1rem !important;
+    }
+
+    /* Slightly calmer atmospheric background on small screens - same
+       identity, less visual noise on a small panel. */
+    .stApp, [data-testid="stAppViewContainer"] {
+        background:
+            radial-gradient(circle at 82% 8%, rgba(53, 217, 255, 0.11) 0%, rgba(53, 217, 255, 0.05) 20%, transparent 42%),
+            radial-gradient(circle at 10% 85%, rgba(166, 255, 77, 0.05) 0%, transparent 32%),
+            repeating-linear-gradient(0deg, rgba(255,255,255,0.015) 0px, rgba(255,255,255,0.015) 1px, transparent 1px, transparent 48px),
+            repeating-linear-gradient(90deg, rgba(255,255,255,0.015) 0px, rgba(255,255,255,0.015) 1px, transparent 1px, transparent 48px),
+            linear-gradient(135deg, #080B10 0%, #0A1017 48%, #080B10 100%) !important;
+    }
+
+    /* Safe default: every column-based row stacks to full width so
+       nothing can force horizontal overflow. Specific .st-key-*
+       wrappers below opt back into a grid/wrap layout deliberately. */
+    div[data-testid="stHorizontalBlock"] {
+        flex-wrap: wrap !important;
+        row-gap: 10px !important;
+    }
+    div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] {
+        flex: 1 1 100% !important;
+        width: 100% !important;
+        min-width: 0 !important;
+    }
+
+    /* KPI telemetry grids: 2-per-row on mobile instead of a full stack.
+       Selectors are written to match the blanket fallback rule's shape
+       (parent > child, same selector "weight") so these - being scoped
+       under a more specific ancestor class - reliably win the cascade. */
+    .st-key-kpi-grid div[data-testid="stHorizontalBlock"],
+    .st-key-kpi-grid-training div[data-testid="stHorizontalBlock"] {
+        flex-wrap: wrap !important;
+        gap: 10px !important;
+    }
+    .st-key-kpi-grid div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"],
+    .st-key-kpi-grid-training div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] {
+        flex: 1 1 46% !important;
+        width: 46% !important;
+        min-width: 140px !important;
+    }
+
+    /* AI suggested-question pills: wrap naturally, sized to their text,
+       instead of stacking one-per-line or being squeezed onto one row. */
+    .st-key-ai-suggestions-grid div[data-testid="stHorizontalBlock"] {
+        flex-wrap: wrap !important;
+        gap: 8px !important;
+    }
+    .st-key-ai-suggestions-grid div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] {
+        flex: 0 1 auto !important;
+        width: auto !important;
+        min-width: 0 !important;
+    }
+    .st-key-ai-suggestions-grid .stButton > button {
+        width: auto !important;
+        white-space: nowrap;
+    }
+
+    /* Hero */
+    .aos-hero {
+        min-height: 300px;
+        padding: 26px 20px;
+        border-radius: 16px;
+        background-position: right center;
+    }
+    .aos-hero-title { font-size: clamp(28px, 9vw, 36px); }
+    .aos-hero-subtitle { font-size: 15px; }
+    .aos-hero-problem { font-size: 13px; max-width: 100%; margin-bottom: 14px; }
+    .aos-hero-meta { gap: 16px; margin-bottom: 14px; }
+    .aos-hero-meta-value { font-size: 0.9rem; }
+    .aos-hero-signal { max-width: 100%; padding: 12px 16px; }
+
+    /* Tabs: compact, and horizontally swipeable (not the whole page)
+       if three labels still can't fit a very narrow screen. */
+    button[data-baseweb="tab"] {
+        font-size: 0.8rem !important;
+        padding: 10px 10px !important;
+        min-height: 44px;
+    }
+    div[data-baseweb="tab-list"] {
+        overflow-x: auto;
+        overflow-y: hidden;
+        -webkit-overflow-scrolling: touch;
+        flex-wrap: nowrap !important;
+    }
+
+    /* Metric cards: tighter but still readable, no clipped values. */
+    div[data-testid="stMetric"] { padding: 10px 12px 8px 12px; }
+    div[data-testid="stMetricValue"] { font-size: 1.3rem; overflow-wrap: anywhere; }
+    div[data-testid="stMetricLabel"] { font-size: 0.68rem; }
+
+    /* Cards/containers generally */
+    div[data-testid="stVerticalBlockBorderWrapper"] { padding: 4px; }
+    .aos-hero, div[data-testid="stVerticalBlockBorderWrapper"], div[data-testid="stMetric"] {
+        max-width: 100%;
+        box-sizing: border-box;
+    }
+
+    /* Tables/dataframes scroll within themselves, never the page. */
+    div[data-testid="stDataFrame"], div[data-testid="stTable"] {
+        max-width: 100%;
+        overflow-x: auto;
+    }
+
+    /* File uploader + AI evidence text stay within the card. */
+    div[data-testid="stFileUploaderDropzone"] { max-width: 100%; }
+    .aos-insight, .aos-signal-card { max-width: 100%; box-sizing: border-box; }
+
+    /* Comfortable tap targets. */
+    .stButton > button, .stDownloadButton > button {
+        min-height: 42px;
+    }
+
+    img { max-width: 100%; height: auto; }
+}
+
+@media (max-width: 480px) {
+    .aos-hero { min-height: 270px; padding: 22px 16px; }
+    .aos-hero-title { font-size: clamp(26px, 10vw, 32px); }
+}
+
+/* Very narrow phones: KPI grid gracefully falls back to one column.
+   (Selector shape matched to the 768px override above so specificity
+   ties resolve correctly rather than losing to the wider-viewport rule.) */
+@media (max-width: 400px) {
+    .st-key-kpi-grid div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"],
+    .st-key-kpi-grid-training div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] {
+        flex: 1 1 100% !important;
+        width: 100% !important;
+    }
+}
 </style>
 """
 

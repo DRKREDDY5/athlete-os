@@ -40,7 +40,7 @@ from src.ai_intelligence import (
     recovery_evidence_rows, format_brief_as_markdown, MAX_QUESTIONS_PER_SESSION,
 )
 
-st.set_page_config(page_title="Athlete OS", page_icon="📊", layout="wide")
+st.set_page_config(page_title="Athlete OS", page_icon="📊", layout="wide", initial_sidebar_state="auto")
 inject_theme()
 
 # ============================================================
@@ -334,22 +334,24 @@ with tab_overview:
             remaining = MAX_QUESTIONS_PER_SESSION - st.session_state.ai_question_count
 
             suggestions = suggested_questions(is_uploaded_mode)
-            sugg_cols = st.columns(len(suggestions))
             clicked_question = None
-            for col, q in zip(sugg_cols, suggestions):
-                with col:
-                    if st.button(q, use_container_width=True, key=f"ai_sugg_{q}"):
-                        clicked_question = q
+            with st.container(key="ai-suggestions-grid"):
+                sugg_cols = st.columns(len(suggestions))
+                for col, q in zip(sugg_cols, suggestions):
+                    with col:
+                        if st.button(q, use_container_width=True, key=f"ai_sugg_{q}"):
+                            clicked_question = q
 
             free_text = st.text_input(
                 "Ask a question about your data", key="ai_free_text",
                 placeholder="e.g. What appears most associated with my recovery?",
             )
-            ask_col, brief_col = st.columns([1, 1.4])
-            with ask_col:
-                ask_clicked = st.button("Ask", type="primary", use_container_width=True)
-            with brief_col:
-                brief_clicked = st.button("Generate Performance Brief", use_container_width=True)
+            with st.container(key="ai-actions-grid"):
+                ask_col, brief_col = st.columns([1, 1.4])
+                with ask_col:
+                    ask_clicked = st.button("Ask", type="primary", use_container_width=True)
+                with brief_col:
+                    brief_clicked = st.button("Generate Performance Brief", use_container_width=True)
 
             st.caption(f"{max(remaining, 0)} of {MAX_QUESTIONS_PER_SESSION} AI questions remaining this session.")
 
@@ -467,38 +469,39 @@ with tab_overview:
         render_eyebrow("Telemetry Metrics")
         st.markdown("#### Performance KPIs")
 
-        row1 = st.columns(4)
-        row1[0].metric("Recovery", fmt(kpis["avg_recovery"], "%"))
-        recovery_band = recovery_band_label(kpis["avg_recovery"])
-        row1[0].markdown(
-            metric_context_html(
-                recovery_band if recovery_band else "SELECTED-PERIOD AVG",
-                {"GREEN RANGE": "var(--aos-green)", "YELLOW RANGE": "var(--aos-amber)", "RED RANGE": "var(--aos-red)"}
-                .get(recovery_band, "var(--aos-muted)"),
-            ),
-            unsafe_allow_html=True,
-        )
+        with st.container(key="kpi-grid"):
+            row1 = st.columns(4)
+            row1[0].metric("Recovery", fmt(kpis["avg_recovery"], "%"))
+            recovery_band = recovery_band_label(kpis["avg_recovery"])
+            row1[0].markdown(
+                metric_context_html(
+                    recovery_band if recovery_band else "SELECTED-PERIOD AVG",
+                    {"GREEN RANGE": "var(--aos-green)", "YELLOW RANGE": "var(--aos-amber)", "RED RANGE": "var(--aos-red)"}
+                    .get(recovery_band, "var(--aos-muted)"),
+                ),
+                unsafe_allow_html=True,
+            )
 
-        row1[1].metric("HRV", fmt(kpis["avg_hrv"], " ms"))
-        hrv_text, hrv_color = _trend_context("Heart rate variability (ms)", 1.0)
-        row1[1].markdown(metric_context_html(hrv_text, hrv_color), unsafe_allow_html=True)
+            row1[1].metric("HRV", fmt(kpis["avg_hrv"], " ms"))
+            hrv_text, hrv_color = _trend_context("Heart rate variability (ms)", 1.0)
+            row1[1].markdown(metric_context_html(hrv_text, hrv_color), unsafe_allow_html=True)
 
-        row1[2].metric("Resting HR", fmt(kpis["avg_rhr"], " bpm"))
-        rhr_text, rhr_color = _trend_context("Resting heart rate (bpm)", 0.5)
-        row1[2].markdown(metric_context_html(rhr_text, rhr_color), unsafe_allow_html=True)
+            row1[2].metric("Resting HR", fmt(kpis["avg_rhr"], " bpm"))
+            rhr_text, rhr_color = _trend_context("Resting heart rate (bpm)", 0.5)
+            row1[2].markdown(metric_context_html(rhr_text, rhr_color), unsafe_allow_html=True)
 
-        row1[3].metric("Sleep", fmt(kpis["avg_sleep_hours"], " hrs", 1))
-        row1[3].markdown(metric_context_html("SELECTED-PERIOD AVG"), unsafe_allow_html=True)
+            row1[3].metric("Sleep", fmt(kpis["avg_sleep_hours"], " hrs", 1))
+            row1[3].markdown(metric_context_html("SELECTED-PERIOD AVG"), unsafe_allow_html=True)
 
-        row2 = st.columns(3)
-        row2[0].metric("Day Strain", fmt(kpis["avg_day_strain"], "", 1))
-        row2[0].markdown(metric_context_html("SELECTED-PERIOD AVG"), unsafe_allow_html=True)
+            row2 = st.columns(3)
+            row2[0].metric("Day Strain", fmt(kpis["avg_day_strain"], "", 1))
+            row2[0].markdown(metric_context_html("SELECTED-PERIOD AVG"), unsafe_allow_html=True)
 
-        row2[1].metric("Sessions", kpis["total_workouts"])
-        row2[1].markdown(metric_context_html("SELECTED-PERIOD TOTAL"), unsafe_allow_html=True)
+            row2[1].metric("Sessions", kpis["total_workouts"])
+            row2[1].markdown(metric_context_html("SELECTED-PERIOD TOTAL"), unsafe_allow_html=True)
 
-        row2[2].metric("Training Rate", fmt(kpis["sessions_per_week"], " / wk", 1))
-        row2[2].markdown(metric_context_html("SELECTED-PERIOD AVG"), unsafe_allow_html=True)
+            row2[2].metric("Training Rate", fmt(kpis["sessions_per_week"], " / wk", 1))
+            row2[2].markdown(metric_context_html("SELECTED-PERIOD AVG"), unsafe_allow_html=True)
 
     st.write("")
 
@@ -631,17 +634,18 @@ with tab_recovery:
         render_eyebrow("Supporting Relationships")
         st.markdown("#### Recovery Drivers in Detail")
 
-        top_row = st.columns(2)
-        with top_row[0]:
-            render_driver_card(by_key["prev_strain"])
-        with top_row[1]:
-            render_driver_card(by_key["sleep"])
+        with st.container(key="stack-grid-recovery-drivers"):
+            top_row = st.columns(2)
+            with top_row[0]:
+                render_driver_card(by_key["prev_strain"])
+            with top_row[1]:
+                render_driver_card(by_key["sleep"])
 
-        bottom_row = st.columns(2)
-        with bottom_row[0]:
-            render_driver_card(by_key["hrv"])
-        with bottom_row[1]:
-            render_driver_card(by_key["rhr"])
+            bottom_row = st.columns(2)
+            with bottom_row[0]:
+                render_driver_card(by_key["hrv"])
+            with bottom_row[1]:
+                render_driver_card(by_key["rhr"])
 
     st.write("")
 
@@ -685,15 +689,16 @@ with tab_training:
             st.markdown(f"#### {selected_activity} KPIs")
             tk = compute_training_kpis(workouts_selected)
 
-            row1 = st.columns(3)
-            row1[0].metric("Total Sessions", tk["total_sessions"])
-            row1[1].metric("Average Strain", fmt(tk["avg_strain"], "", 1))
-            row1[2].metric("Average Duration", fmt(tk["avg_duration"], " min"))
+            with st.container(key="kpi-grid-training"):
+                row1 = st.columns(3)
+                row1[0].metric("Total Sessions", tk["total_sessions"])
+                row1[1].metric("Average Strain", fmt(tk["avg_strain"], "", 1))
+                row1[2].metric("Average Duration", fmt(tk["avg_duration"], " min"))
 
-            row2 = st.columns(3)
-            row2[0].metric("Average Calories", fmt(tk["avg_calories"], " kcal"))
-            row2[1].metric("Average Heart Rate", fmt(tk["avg_hr"], " bpm"))
-            row2[2].metric("Average Max Heart Rate", fmt(tk["avg_max_hr"], " bpm"))
+                row2 = st.columns(3)
+                row2[0].metric("Average Calories", fmt(tk["avg_calories"], " kcal"))
+                row2[1].metric("Average Heart Rate", fmt(tk["avg_hr"], " bpm"))
+                row2[2].metric("Average Max Heart Rate", fmt(tk["avg_max_hr"], " bpm"))
 
         st.write("")
 
@@ -742,23 +747,24 @@ with tab_training:
                     ("avg_hr", "Avg HR", " bpm", 0),
                 ]
 
-                card_cols = st.columns(len(cvg_profile))
-                for col, (_, row) in zip(card_cols, cvg_profile.iterrows()):
-                    with col:
-                        with st.container(border=True):
-                            st.markdown(f"**{row['activity']}**")
-                            n_note = f" · {small_sample_label(row['sessions'])}" if row["sessions"] <= MIN_SAMPLE_SIZE else ""
-                            st.caption(f"{int(row['sessions'])} sessions{n_note}")
-                            for key, label, unit, decimals in stat_fields:
-                                val = row[key]
-                                val_str = "N/A" if pd.isna(val) else f"{val:.{decimals}f}{unit}"
-                                is_leader = leaders.get(key) == row["activity"]
-                                css_class = "aos-stat-row win" if is_leader else "aos-stat-row"
-                                st.markdown(
-                                    f'<div class="{css_class}"><span class="label">{label}</span>'
-                                    f'<span class="value">{val_str}</span></div>',
-                                    unsafe_allow_html=True,
-                                )
+                with st.container(key="stack-grid-training-comparison"):
+                    card_cols = st.columns(len(cvg_profile))
+                    for col, (_, row) in zip(card_cols, cvg_profile.iterrows()):
+                        with col:
+                            with st.container(border=True):
+                                st.markdown(f"**{row['activity']}**")
+                                n_note = f" · {small_sample_label(row['sessions'])}" if row["sessions"] <= MIN_SAMPLE_SIZE else ""
+                                st.caption(f"{int(row['sessions'])} sessions{n_note}")
+                                for key, label, unit, decimals in stat_fields:
+                                    val = row[key]
+                                    val_str = "N/A" if pd.isna(val) else f"{val:.{decimals}f}{unit}"
+                                    is_leader = leaders.get(key) == row["activity"]
+                                    css_class = "aos-stat-row win" if is_leader else "aos-stat-row"
+                                    st.markdown(
+                                        f'<div class="{css_class}"><span class="label">{label}</span>'
+                                        f'<span class="value">{val_str}</span></div>',
+                                        unsafe_allow_html=True,
+                                    )
 
                 st.write("")
                 render_eyebrow("What the Data Says")
